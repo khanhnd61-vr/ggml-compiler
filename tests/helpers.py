@@ -8,11 +8,11 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from ggmlc.emit.gguf_runtime import write_gguf
-from ggmlc.ir import Stage, run_stage
-from ggmlc.ir.program import ProgramIR
-from ggmlc.runtime import Session
-from ggmlc.verify.parity import compare
+from ggml_compiler.emit.gguf_runtime import write_gguf
+from ggml_compiler.ir import Stage, run_stage
+from ggml_compiler.ir.program import ProgramIR
+from ggml_compiler.runtime import Session
+from ggml_compiler.verify.parity import compare
 
 # Parity tolerances on max|out - ref| / max(1, max|ref|). CUDA matmuls do not accumulate in
 # full f32, so CUDA gets more room.
@@ -44,10 +44,10 @@ def check_stage(stage: Stage, inputs: list[torch.Tensor], backend: str, tmp_path
 def check_module(module: torch.nn.Module, inputs: tuple, backend: str, tmp_path: Path, tol: float | None = None) -> None:
     """Compile a module and check the exported IR, the IR after passes, and the runtime against
     PyTorch."""
-    import ggmlc
-    from ggmlc.api import Program
-    from ggmlc.frontend.torch_export import export_program
-    from ggmlc.passes import run_pipeline
+    import ggml_compiler
+    from ggml_compiler.api import Program
+    from ggml_compiler.frontend.torch_export import export_program
+    from ggml_compiler.passes import run_pipeline
 
     tol = tol if tol is not None else TOL[backend]
     with torch.no_grad():
@@ -63,7 +63,7 @@ def check_module(module: torch.nn.Module, inputs: tuple, backend: str, tmp_path:
             assert d <= 1e-5 * max(1.0, e.abs().max().item()), f"interpreter {when}: max|d|={d}"
         run_pipeline(prog)
 
-    art = ggmlc.compile(module, inputs, tmp_path / "art")
+    art = ggml_compiler.compile(module, inputs, tmp_path / "art")
     with Session(art.gguf, backend=backend) as s:
         out = s.run(*inputs)
     names = [t.name for t in s.outputs]
@@ -89,10 +89,10 @@ def build_generated(cpp_dir, build_dir) -> str:
     returns the <name>-check binary."""
     import subprocess
 
-    from ggmlc.runtime import library_path
+    from ggml_compiler.runtime import library_path
 
     cfg = ["cmake", "-S", str(cpp_dir), "-B", str(build_dir), "-DCMAKE_BUILD_TYPE=Release",
-           f"-DGGMLC_RUNTIME_LIB={library_path()}"]
+           f"-DGGML_COMPILER_RUNTIME_LIB={library_path()}"]
     for cmd in (cfg, ["cmake", "--build", str(build_dir), "-j8"]):
         res = subprocess.run(cmd, capture_output=True, text=True)
         assert res.returncode == 0, res.stdout[-3000:] + res.stderr[-3000:]

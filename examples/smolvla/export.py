@@ -1,5 +1,5 @@
-"""LeRobot SmolVLA as a two-stage ggmlc program with a 10-step denoising loop:
-`ggmlc compile examples/smolvla/export.py:program --out out/smolvla`.
+"""LeRobot SmolVLA as a two-stage ggml-compiler program with a 10-step denoising loop:
+`ggml-compiler compile examples/smolvla/export.py:program --out out/smolvla`.
 
 prefix: images, image masks, language tokens and mask, state -> VLM key/value cache and prefix
         padding mask.
@@ -12,7 +12,7 @@ import os
 
 import torch
 
-import ggmlc
+import ggml_compiler
 
 CHECKPOINT = os.environ.get("SMOLVLA_CHECKPOINT", "khanhnd61/smolvla_so101-multi-task-clean")
 
@@ -42,7 +42,7 @@ def load(checkpoint: str = CHECKPOINT):
         config = SmolVLAConfig.from_pretrained(d)
     policy = SmolVLAPolicy.from_pretrained(checkpoint, config=config).eval()
     # LeRobot keeps the VLM's layers in bf16 and casts activations to match. Run everything in f32
-    # (the weights keep their bf16-rounded values) so PyTorch and ggmlc compute the same thing.
+    # (the weights keep their bf16-rounded values) so PyTorch and ggml-compiler compute the same thing.
     return policy.float()
 
 
@@ -98,12 +98,12 @@ def example_inputs(config):
     return images, img_masks, lang_tokens, lang_masks, state, noise
 
 
-def program(checkpoint: str = CHECKPOINT) -> ggmlc.Program:
+def program(checkpoint: str = CHECKPOINT) -> ggml_compiler.Program:
     return program_from_policy(load(checkpoint))
 
 def quantize_expert(policy, cfg_name: str = "INT8_DEFAULT_CFG"):
     """Quantize only the action expert with NVIDIA ModelOpt, calibrating on one example sample.
-    Compile the result with `ggmlc.compile(..., prequant=ggmlc.ModelOpt())`."""
+    Compile the result with `ggml_compiler.compile(..., prequant=ggml_compiler.ModelOpt())`."""
     import copy
 
     import modelopt.torch.quantization as mtq
@@ -130,25 +130,26 @@ def quantize_expert(policy, cfg_name: str = "INT8_DEFAULT_CFG"):
     return policy
 
 
-def program_from_policy(policy) -> ggmlc.Program:
+def program_from_policy(policy) -> ggml_compiler.Program:
     """Like program(), for an already loaded (and possibly quantized) policy."""
     s = Stages(policy.model)
     images, img_masks, lang_tokens, lang_masks, state, noise = example_inputs(policy.config)
     prefix_ex = (images, img_masks, lang_tokens, lang_masks, state)
     with torch.no_grad():
         kv, pad = s.prefix(*prefix_ex)
-    return ggmlc.Program(
+    return ggml_compiler.Program(
         root=policy.model,
         stages={
-            "prefix": ggmlc.Stage(s.prefix, prefix_ex),
-            "step": ggmlc.Stage(s.step, (noise, torch.ones(1), kv, pad)),
+            "prefix": ggml_compiler.Stage(s.prefix, prefix_ex),
+            "step": ggml_compiler.Stage(s.step, (noise, torch.ones(1), kv, pad)),
         },
-        driver=ggmlc.Driver(
+        driver=ggml_compiler.Driver(
             inputs=["images", "img_masks", "lang_tokens", "lang_masks", "state", "noise"],
             body=[
-                ggmlc.call("prefix", ["images", "img_masks", "lang_tokens", "lang_masks", "state"], ["kv", "pad"]),
-                ggmlc.loop(s.n, carry={"x": "noise"}, scalars={"t": s.timesteps()},
-                           body=[ggmlc.call("step", ["x", "t", "kv", "pad"], ["x"])]),
+                ggml_compiler.call("prefix", ["images", "img_masks", "lang_tokens", "lang_masks", "state"], ["kv",
+                                                                                                             "pad"]),
+                ggml_compiler.loop(s.n, carry={"x": "noise"}, scalars={"t": s.timesteps()},
+                                   body=[ggml_compiler.call("step", ["x", "t", "kv", "pad"], ["x"])]),
             ],
             outputs=["x"],
         ),

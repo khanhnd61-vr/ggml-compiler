@@ -1,5 +1,5 @@
 """L5 exit check for SmolVLM2-500M-Instruct: an image prompt (17 tiles, 1088 image tokens) through
-ggmlc.causal_lm's encode and prefill_mm matches transformers in f32 (last-token logits at the
+ggml_compiler.causal_lm's encode and prefill_mm matches transformers in f32 (last-token logits at the
 acceptance tolerances, 64 greedy tokens exactly), on CPU and CUDA, from the host and the device
 generation loop."""
 
@@ -10,8 +10,8 @@ import pytest
 import torch
 from helpers import assert_close, scratch_dir
 
-import ggmlc
-from ggmlc.runtime import Session
+import ggml_compiler
+from ggml_compiler.runtime import Session
 
 pytestmark = pytest.mark.slow
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
@@ -41,7 +41,7 @@ def smolvlm(tmp_path_factory):
         ref = model(**inp).logits[0, -1].numpy()
         greedy = model.generate(**inp, max_new_tokens=64, do_sample=False)[0, inp["input_ids"].shape[1]:].tolist()
     with scratch_dir(tmp_path_factory, "smolvlm") as out:
-        art = ggmlc.compile(ggmlc.causal_lm(model, max_context=2048), out_dir=out)
+        art = ggml_compiler.compile(ggml_compiler.causal_lm(model, max_context=2048), out_dir=out)
         del model
         yield art, inp["input_ids"][0].tolist(), inp["pixel_values"], ref, greedy
 
@@ -50,7 +50,7 @@ def test_last_logits(smolvlm, backend):
     art, ids, pixels, ref, _ = smolvlm
     with Session(art.gguf, backend=backend) as s:
         assert pixels.shape[1] == 17 and ids.count(s.metadata["image"]["token"]) == 17 * 64
-        g = ggmlc.Generator(s)
+        g = ggml_compiler.Generator(s)
         g.reset()
         g.encode(pixels)
         assert_close({"logits": g.feed(ids)}, {"logits": ref}, ACCEPT[backend])
@@ -60,5 +60,5 @@ def test_last_logits(smolvlm, backend):
 def test_greedy_64(smolvlm, backend, device):
     art, ids, pixels, _, greedy = smolvlm
     with Session(art.gguf, backend=backend) as s:
-        got = ggmlc.Generator(s).generate(ids, max_new=64, pixels=pixels, device=device)
+        got = ggml_compiler.Generator(s).generate(ids, max_new=64, pixels=pixels, device=device)
     assert got == greedy

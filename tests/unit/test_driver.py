@@ -5,8 +5,8 @@ import torch
 import torch.nn as nn
 from helpers import assert_close
 
-import ggmlc
-from ggmlc.runtime import Session
+import ggml_compiler
+from ggml_compiler.runtime import Session
 
 
 def r(*shape, seed=0):
@@ -36,15 +36,16 @@ def _flow_program(n=10):
     ctx, noise = r(3, 8), r(3, 4, seed=1)
     with torch.no_grad():
         feats = m.encode(ctx)
-    return m, ctx, noise, ggmlc.Program(
+    return m, ctx, noise, ggml_compiler.Program(
         root=m,
-        stages={"encode": ggmlc.Stage(m.encode, (ctx,)), "step": ggmlc.Stage(m.step, (noise, torch.ones(1), feats))},
-        driver=ggmlc.Driver(
+        stages={"encode": ggml_compiler.Stage(m.encode, (ctx,)), "step": ggml_compiler.Stage(m.step, (noise,
+                                                                                                      torch.ones(1), feats))},
+        driver=ggml_compiler.Driver(
             inputs=["ctx", "noise"],
             body=[
-                ggmlc.call("encode", ["ctx"], ["feats"]),
-                ggmlc.loop(n, carry={"x": "noise"}, scalars={"t": [1.0 - i / n for i in range(n)]},
-                           body=[ggmlc.call("step", ["x", "t", "feats"], ["x"])]),
+                ggml_compiler.call("encode", ["ctx"], ["feats"]),
+                ggml_compiler.loop(n, carry={"x": "noise"}, scalars={"t": [1.0 - i / n for i in range(n)]},
+                                   body=[ggml_compiler.call("step", ["x", "t", "feats"], ["x"])]),
             ],
             outputs=["x"],
         ),
@@ -53,7 +54,7 @@ def _flow_program(n=10):
 
 def test_loop_matches_pytorch(backend, tmp_path):
     m, ctx, noise, program = _flow_program()
-    art = ggmlc.compile(program, out_dir=tmp_path)
+    art = ggml_compiler.compile(program, out_dir=tmp_path)
     with torch.no_grad():
         feats, x = m.encode(ctx), noise
         for i in range(10):
@@ -87,7 +88,7 @@ def test_int_and_bool_inputs(backend, tmp_path):
     m = Masked().eval()
     tokens = torch.tensor([[5, 17, 42, 3, 0, 0, 9]])
     mask = torch.tensor([[True, True, True, True, False, False, True]])
-    art = ggmlc.compile(m, (tokens, mask), tmp_path)
+    art = ggml_compiler.compile(m, (tokens, mask), tmp_path)
     with Session(art.gguf, backend=backend) as s:
         assert [(t.name, t.dtype) for t in s.inputs] == [("tokens", "i32"), ("mask", "f32")]
         out = s.run(tokens=tokens, mask=mask)
@@ -113,14 +114,15 @@ def test_loop_invariants_are_hoisted(backend, tmp_path):
     torch.manual_seed(0)
     m = InvariantWork().eval()
     ctx, noise = r(2, 16), r(2, 4, seed=1)
-    program = ggmlc.Program(
+    program = ggml_compiler.Program(
         root=m,
-        stages={"step": ggmlc.Stage(m.step, (noise, torch.ones(1), ctx))},
-        driver=ggmlc.Driver(inputs=["ctx", "noise"],
-                            body=[ggmlc.loop(5, carry={"x": "noise"}, scalars={"t": [1, 2, 3, 4, 5]},
-                                             body=[ggmlc.call("step", ["x", "t", "ctx"], ["x"])])],
-                            outputs=["x"]))
-    art = ggmlc.compile(program, out_dir=tmp_path)
+        stages={"step": ggml_compiler.Stage(m.step, (noise, torch.ones(1), ctx))},
+        driver=ggml_compiler.Driver(
+            inputs=["ctx", "noise"],
+            body=[ggml_compiler.loop(5, carry={"x": "noise"}, scalars={"t": [1, 2, 3, 4, 5]},
+                                     body=[ggml_compiler.call("step", ["x", "t", "ctx"], ["x"])])],
+            outputs=["x"]))
+    art = ggml_compiler.compile(program, out_dir=tmp_path)
     stages = art.report.data["stages"]
     assert stages["step.invariant"]["ops"].get("tanh") == 1 and "tanh" not in stages["step"]["ops"]
     with Session(art.gguf, backend=backend) as s:
@@ -147,17 +149,17 @@ def test_loop_slices(backend, tmp_path):
     n = 6
     noise, zs = r(2, 4), r(n, 2, 4, seed=1)
     c, sigma = [0.9 - 0.1 * i for i in range(n)], [0.5 / (i + 1) for i in range(n)]
-    program = ggmlc.Program(
+    program = ggml_compiler.Program(
         root=m,
         # Every scalar example is the same tensor object: the export must still see two inputs.
-        stages={"step": ggmlc.Stage(m.step, (noise, zs[0], *[torch.ones(1)] * 2))},
-        driver=ggmlc.Driver(inputs=["noise", "zs"],
-                            body=[ggmlc.loop(n, carry={"x": "noise"}, scalars={"c": c, "sigma": sigma},
-                                             slices={"z": "zs"},
-                                             body=[ggmlc.call("step", ["x", "z", "c", "sigma"], ["x"])])],
-                            outputs=["x"],
-                            examples={"zs": zs}))
-    art = ggmlc.compile(program, out_dir=tmp_path)
+        stages={"step": ggml_compiler.Stage(m.step, (noise, zs[0], *[torch.ones(1)] * 2))},
+        driver=ggml_compiler.Driver(
+            inputs=["noise", "zs"],
+            body=[ggml_compiler.loop(n, carry={"x": "noise"}, scalars={"c": c, "sigma": sigma}, slices={"z": "zs"},
+                                     body=[ggml_compiler.call("step", ["x", "z", "c", "sigma"], ["x"])])],
+            outputs=["x"],
+            examples={"zs": zs}))
+    art = ggml_compiler.compile(program, out_dir=tmp_path)
     with torch.no_grad():
         x = noise
         for i in range(n):
@@ -174,10 +176,10 @@ def test_aliased_example_inputs(backend, tmp_path):
     """One tensor object given for two stage inputs still makes two runtime inputs."""
     one = torch.ones(3)
     m = nn.Module()
-    program = ggmlc.Program(root=m, stages={"f": ggmlc.Stage(lambda a, b: a * 2 - b, (one, one))},
-                            driver=ggmlc.Driver(inputs=["a", "b"], body=[ggmlc.call("f", ["a", "b"], ["y"])],
-                                                outputs=["y"]))
-    art = ggmlc.compile(program, out_dir=tmp_path)
+    program = ggml_compiler.Program(
+        root=m, stages={"f": ggml_compiler.Stage(lambda a, b: a * 2 - b, (one, one))},
+        driver=ggml_compiler.Driver(inputs=["a", "b"], body=[ggml_compiler.call("f", ["a", "b"], ["y"])], outputs=["y"]))
+    art = ggml_compiler.compile(program, out_dir=tmp_path)
     with Session(art.gguf, backend=backend) as s:
         out = s.run(a=np.full(3, 5.0, np.float32), b=np.full(3, 1.0, np.float32))
     np.testing.assert_allclose(out["y"], np.full(3, 9.0), atol=1e-6)

@@ -1,4 +1,4 @@
-# Using ggmlc
+# Using ggml-compiler
 
 - [Compiling a single-stage model](#compiling-a-single-stage-model)
 - [Running a compiled model](#running-a-compiled-model)
@@ -23,7 +23,7 @@ A model with one forward pass compiles in one call. Wrap it so the inputs and ou
 tensors or pytrees of tensors (`examples/act/export.py` is the full version of this one):
 
 ```python
-import torch, ggmlc
+import torch, ggml_compiler
 from lerobot.policies.act.modeling_act import ACTPolicy
 
 act = ACTPolicy.from_pretrained("khanhnd61/act_so101-multi-task-clean").eval().model
@@ -38,7 +38,7 @@ class ACTInfer(torch.nn.Module):
         return actions
 
 example = (torch.zeros(1, 6), torch.rand(1, 3, 480, 640), torch.rand(1, 3, 480, 640))
-art = ggmlc.compile(ACTInfer(act), example, "out/act",
+art = ggml_compiler.compile(ACTInfer(act), example, "out/act",
                     input_names=["state", "front", "wrist"], output_names=["actions"])
 
 print(art.gguf)               # out/act/model.gguf
@@ -55,10 +55,10 @@ out/act/
   model.gguf                 weights + compiled program
   report.json                op histogram per stage, every weight's stored type and error, I/O
   example_inputs.npz         the inputs used at compile time
-  reference_outputs.npz      PyTorch (or onnxruntime) outputs on them, used by `ggmlc verify`
+  reference_outputs.npz      PyTorch (or onnxruntime) outputs on them, used by `ggml-compiler verify`
 ```
 
-`ggmlc.compile` options:
+`ggml_compiler.compile` options:
 
 | Option | Meaning |
 |---|---|
@@ -66,8 +66,8 @@ out/act/
 | `opt="O0" … "O3"` | Optimization level (default `O1`; see [below](#optimization-levels-and-flags)) |
 | `flags={"name": bool}` | Turn single flags on or off on top of the level |
 | `precision="exact" \| "fast"`, `attention="exact" \| "flash"` | Older spellings: `exact` is `O1`, `fast` is `O2`; `attention` sets the `flash_attention` flag |
-| `dtype_policy` | Weight storage types, per tensor (YAML path, dict or `ggmlc.DTypePolicy`) |
-| `prequant=ggmlc.ModelOpt()` | Import a ModelOpt-quantized model's weights |
+| `dtype_policy` | Weight storage types, per tensor (YAML path, dict or `ggml_compiler.DTypePolicy`) |
+| `prequant=ggml_compiler.ModelOpt()` | Import a ModelOpt-quantized model's weights |
 | `emit=("gguf", "cpp")` | Also write the C++ project |
 | `backends=["cpu", "cuda"]` | Load the result on these backends now, so a node a backend cannot run fails at compile time |
 | `input_shapes` | ONNX only: pin dynamic input dims |
@@ -77,10 +77,10 @@ out/act/
 From Python:
 
 ```python
-sess = ggmlc.Session("out/act/model.gguf", backend="cuda", n_threads=6)   # "cpu" | "cuda" | "auto"
+sess = ggml_compiler.Session("out/act/model.gguf", backend="cuda", n_threads=6)  # "cpu" | "cuda" | "auto"
 sess.inputs     # [TensorInfo(name="state", shape=(1, 6), dtype="f32"), ...]
-out = sess.run(state=state, front=img0, wrist=img1)                       # numpy or torch in, dict of numpy out
-out["actions"].shape                                                      # (1, 100, 6)
+out = sess.run(state=state, front=img0, wrist=img1)  # numpy or torch in, dict of numpy out
+out["actions"].shape                                 # (1, 100, 6)
 sess.stats      # {"ms_total": ..., "n_calls": 1, "stages": {"forward": {"ms": ..., "calls": 1}}}
 sess.close()    # or use it as a context manager
 ```
@@ -88,9 +88,9 @@ sess.close()    # or use it as a context manager
 From the shell, on the inputs saved at compile time:
 
 ```bash
-ggmlc verify out/act/model.gguf --backend cuda     # against the PyTorch outputs saved at compile time
-ggmlc bench  out/act/model.gguf --backend cpu --threads 6
-ggmlc bench  out/act/model.gguf --backend cuda --profile   # time every node, grouped by op and source line
+ggml-compiler verify out/act/model.gguf --backend cuda  # against the PyTorch outputs saved at compile time
+ggml-compiler bench  out/act/model.gguf --backend cpu --threads 6
+ggml-compiler bench  out/act/model.gguf --backend cuda --profile  # every node, grouped by op and source line
 ```
 
 ## Multi-stage models: stages and a driver
@@ -102,7 +102,7 @@ are shared, and values passed between stages, such as the prefix KV cache, stay 
 `examples/smolvla/export.py` is the full version of this one:
 
 ```python
-import torch, ggmlc
+import torch, ggml_compiler
 from transformers import DynamicCache
 from lerobot.policies.common.vla_utils import make_att_2d_masks
 
@@ -126,21 +126,22 @@ def step(x, t, kv, pad):
 prefix_ex = (images, img_masks, lang_tokens, lang_masks, state)   # static shapes
 kv_ex, pad_ex = prefix(*prefix_ex)
 
-program = ggmlc.Program(
+program = ggml_compiler.Program(
     root=fm,                                                   # owner of every parameter the stages use
-    stages={"prefix": ggmlc.Stage(prefix, prefix_ex),
-            "step": ggmlc.Stage(step, (noise, torch.ones(1), kv_ex, pad_ex))},
-    driver=ggmlc.Driver(
+    stages={"prefix": ggml_compiler.Stage(prefix, prefix_ex),
+            "step": ggml_compiler.Stage(step, (noise, torch.ones(1), kv_ex, pad_ex))},
+    driver=ggml_compiler.Driver(
         inputs=["images", "img_masks", "lang_tokens", "lang_masks", "state", "noise"],
         body=[
-            ggmlc.call("prefix", ["images", "img_masks", "lang_tokens", "lang_masks", "state"], ["kv", "pad"]),
-            ggmlc.loop(N, carry={"x": "noise"}, scalars={"t": [1.0 + i * dt for i in range(N)]},
-                       body=[ggmlc.call("step", ["x", "t", "kv", "pad"], ["x"])]),
+            ggml_compiler.call("prefix", ["images", "img_masks", "lang_tokens", "lang_masks", "state"],
+                               ["kv", "pad"]),
+            ggml_compiler.loop(N, carry={"x": "noise"}, scalars={"t": [1.0 + i * dt for i in range(N)]},
+                               body=[ggml_compiler.call("step", ["x", "t", "kv", "pad"], ["x"])]),
         ],
         outputs=["x"],
     ),
 )
-art = ggmlc.compile(program, out_dir="out/smolvla")
+art = ggml_compiler.compile(program, out_dir="out/smolvla")
 ```
 
 | Driver element | Meaning |
@@ -157,7 +158,7 @@ step, so the artifact stays deterministic and the caller owns the random numbers
 
 ```python
 sched = schedule(model)    # {"t": [...], "c0": [...], ..., "sigma": [...]}: one entry per step
-ggmlc.loop(100, body=[ggmlc.call("step", ["x", "cond", "z", *sched], ["x"])],
+ggml_compiler.loop(100, body=[ggml_compiler.call("step", ["x", "cond", "z", *sched], ["x"])],
            carry={"x": "noise"}, scalars=sched, slices={"z": "step_noise"})   # step_noise: [100, B, T, D]
 ```
 
@@ -170,36 +171,37 @@ Work inside a loop that depends only on values the loop never changes is moved o
 automatically: SmolVLA's expert projects the cached prefix K/V once, in a `step.invariant` stage
 that runs before the loop, instead of on every step.
 
-The CLI compiles a program from a Python file: `ggmlc compile examples/smolvla/export.py:program
---out out/smolvla`, where `program` is a `ggmlc.Program` or a function returning one.
+The CLI compiles a program from a Python file: `ggml-compiler compile
+examples/smolvla/export.py:program --out out/smolvla`, where `program` is a `ggml_compiler.Program`
+or a function returning one.
 
 ### Entry points and state
 
-A program can have several **entry points**, each its own driver, run one at a time; and
-**state**, values that persist across runs on the device. `ggmlc.causal_lm` is built this way:
+A program can have several **entry points**, each its own driver, run one at a time; and **state**,
+values that persist across runs on the device. `ggml_compiler.causal_lm` is built this way:
 
 ```python
-program = ggmlc.Program(
+program = ggml_compiler.Program(
     root=model,
-    stages={"prefill": ggmlc.Stage(step, prefill_ex, dynamic_shapes=...),
-            "decode": ggmlc.Stage(step, decode_ex, dynamic_shapes=...)},
-    driver={"prefill": ggmlc.Driver(inputs=["tokens", "positions", "mask"],
-                                    body=[ggmlc.call("prefill", ["tokens", "positions", "mask", "kv"], ["logits", "kv"])],
-                                    outputs=["logits"]),
-            "decode": ggmlc.Driver(inputs=["token", "position", "mask1"],
-                                   body=[ggmlc.call("decode", ["token", "position", "mask1", "kv"], ["logits1", "kv"])],
-                                   outputs=["logits1"])},
+    stages={"prefill": ggml_compiler.Stage(step, prefill_ex, dynamic_shapes=...),
+            "decode": ggml_compiler.Stage(step, decode_ex, dynamic_shapes=...)},
+    driver={"prefill": ggml_compiler.Driver(
+                inputs=["tokens", "positions", "mask"], outputs=["logits"],
+                body=[ggml_compiler.call("prefill", ["tokens", "positions", "mask", "kv"], ["logits", "kv"])]),
+            "decode": ggml_compiler.Driver(
+                inputs=["token", "position", "mask1"], outputs=["logits1"],
+                body=[ggml_compiler.call("decode", ["token", "position", "mask1", "kv"], ["logits1", "kv"])])},
     state={"kv": kv_example},                       # zeros at load; Session.reset() zeroes it again
     metadata={"eos": [151645]},                     # stored in the GGUF for callers
 )
 
-with ggmlc.Session(art.gguf) as s:
+with ggml_compiler.Session(art.gguf) as s:
     s.entries                                       # {"prefill": (inputs, outputs), "decode": ...}
     s.run(tokens=..., positions=..., mask=..., entry="prefill")
     s.run(token=..., position=..., mask1=..., entry="decode")
 ```
 
-- The first entry is the default (`Session.run` without `entry`, `ggmlc_run`).
+- The first entry is the default (`Session.run` without `entry`, `ggml_compiler_run`).
 - A stage reads state as a parameter and returns its new value, which the driver binds to the same
   name. When the stage writes it with an in-place op (`index_copy` / `index_put` of rows, which
   lower to `ggml_set_rows`), the update costs only the rows written: the runtime sees that the
@@ -216,7 +218,7 @@ with ggmlc.Session(art.gguf) as s:
   One artifact serves every instruction of that length.
 - ggml has no bool type and indexes with int32. Integer inputs are stored as `i32` and boolean
   masks as `f32` (0/1). `Session.run` converts for you; C callers read the dtype from
-  `ggmlc_input_info`.
+  `ggml_compiler_input_info`.
 - Random inputs such as flow-matching noise are explicit inputs, so runs are reproducible.
 - Tensors above 4-D (a camera history `[B, T, cams, C, H, W]`) are fine while all but four of
   their dims are 1: ggml stores them without the size-1 dims.
@@ -234,13 +236,14 @@ runtime builds the ggml graphs for each size it is given. Declare dims per stage
 from torch.export import Dim
 
 seq = Dim("seq", min=2, max=512)
-program = ggmlc.Program(
+program = ggml_compiler.Program(
     root=model,
-    stages={"forward": ggmlc.Stage(model, (x,), dynamic_shapes=({1: seq},))},  # x: [1, seq, 256]
-    driver=ggmlc.Driver(inputs=["x"], body=[ggmlc.call("forward", ["x"], ["y"])], outputs=["y"]))
-art = ggmlc.compile(program, out_dir="out/encoder")
+    stages={"forward": ggml_compiler.Stage(model, (x,), dynamic_shapes=({1: seq},))},  # x: [1, seq, 256]
+    driver=ggml_compiler.Driver(inputs=["x"], outputs=["y"],
+                                body=[ggml_compiler.call("forward", ["x"], ["y"])]))
+art = ggml_compiler.compile(program, out_dir="out/encoder")
 
-with ggmlc.Session(art.gguf) as s:
+with ggml_compiler.Session(art.gguf) as s:
     s.symbols                              # {"seq": (2, 512)}
     s.run(x=torch.randn(1, 37, 256))       # binds seq = 37 from the input's shape
 ```
@@ -250,29 +253,29 @@ with ggmlc.Session(art.gguf) as s:
   division, modulo, min, max).
 - torch.export assumes a dynamic dim is never 0 or 1 and raises such a minimum to 2. Compile a
   separate stage for size 1 (an LLM's one-token decode step).
-- `Session.run` binds the symbols from the input shapes. C callers use `ggmlc_set_input_shape` or
-  `ggmlc_set_symbol` (see the [C API](#c-api)).
+- `Session.run` binds the symbols from the input shapes. C callers use
+  `ggml_compiler_set_input_shape` or `ggml_compiler_set_symbol` (see the [C API](#c-api)).
 - Driver values between stages may be symbolic too; their buffers are sized for the largest
   binding. The first run with a new binding rebuilds the graphs of the stages with symbolic
   shapes; graphs are first built with every symbol at its max, so that is the memory reserved.
-- `report.json`, `ggmlc inspect` and the generated C++ show symbolic shapes (`[1, seq, 256]`);
-  the C++ builders read each symbol with `ggmlc_build_symbol`.
+- `report.json`, `ggml-compiler inspect` and the generated C++ show symbolic shapes (`[1, seq,
+  256]`); the C++ builders read each symbol with `ggml_compiler_build_symbol`.
 
 ## LLMs and VLMs
 
-`ggmlc.causal_lm` turns a Hugging Face causal LM (Llama, Qwen2/3, SmolLM, ...) into a program
-with a KV cache; `ggmlc.Generator` drives it:
+`ggml_compiler.causal_lm` turns a Hugging Face causal LM (Llama, Qwen2/3, SmolLM, Gemma 4, ...) into
+a program with a KV cache; `ggml_compiler.Generator` drives it:
 
 ```python
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen3-0.6B", dtype=torch.float32)
-art = ggmlc.compile(ggmlc.causal_lm(model, max_context=4096, max_prompt=512), out_dir="out/qwen3",
-                    opt="O3", dtype_policy="q4_k_m.yaml")
+art = ggml_compiler.compile(ggml_compiler.causal_lm(model, max_context=4096, max_prompt=512),
+                            out_dir="out/qwen3", opt="O3", dtype_policy="q4_k_m.yaml")
 
 tok = AutoTokenizer.from_pretrained("Qwen/Qwen3-0.6B")
-with ggmlc.Session(art.gguf) as s:
-    gen = ggmlc.Generator(s)
+with ggml_compiler.Session(art.gguf) as s:
+    gen = ggml_compiler.Generator(s)
     ids = gen.generate(tok("The capital of France is")["input_ids"], max_new=32)   # greedy
     print(tok.decode(ids))
 ```
@@ -295,13 +298,18 @@ with ggmlc.Session(art.gguf) as s:
   tokens it produced are the first `stats["stages"]["decode_greedy"]["calls"]` rows.
   `Generator.generate(prompt, max_new, device=True)` uses it. `causal_lm(..., generate=False)`
   leaves it out.
-- Tokenization and chat templates stay with the caller. The artifact records what a C caller
-  needs in its metadata (`ggmlc_metadata(m, "ggmlc.meta")`, `Session.metadata`): `max_context`,
-  `max_prompt`, `kv_block` (256), `min_kv`, `vocab`, `eos`, `bos`.
-- `ggmlc.llm.bench(session, pp=512, tg=128)` measures prompt and generation tokens/s the way
+- Tokenization and chat templates stay with the caller. The artifact records what a C caller needs
+  in its metadata (`ggml_compiler_metadata(m, "ggml_compiler.meta")`, `Session.metadata`):
+  `max_context`, `max_prompt`, `kv_block` (256), `min_kv`, `vocab`, `eos`, `bos`.
+- `ggml_compiler.llm.bench(session, pp=512, tg=128)` measures prompt and generation tokens/s the way
   llama-bench does.
-- `ggmlc.llm.llama_cpp_policy("model-q4_k_m.gguf", model)` is a dtype policy that gives every
-  weight the type llama.cpp stored it as in that GGUF, so the two run the same weight bytes.
+- `ggml_compiler.llm.llama_cpp_policy("model-q4_k_m.gguf", model)` is a dtype policy that gives
+  every weight the type llama.cpp stored it as in that GGUF, so the two run the same weight bytes.
+  For a multimodal model without `mmproj=` (below), that is the language model's weights.
+- Gemma 4 (e.g. `google/gemma-4-E2B-it`) compiles its language model only: images and audio are
+  not compiled yet. Its sliding-window layers need no extra input: the program masks the
+  positions older than the window itself, from `positions`. Layers that reuse an earlier layer's
+  K/V have no cache of their own.
 - At `O3`, decoding runs with flash attention on an f16 cache, ggml's RoPE, and SwiGLU and RMSNorm
   as single ggml ops; see [optimization levels](#optimization-levels-and-flags).
 
@@ -315,12 +323,13 @@ the same program:
 from transformers import AutoModelForImageTextToText, AutoProcessor
 
 model = AutoModelForImageTextToText.from_pretrained(repo, dtype=torch.float32)
-art = ggmlc.compile(ggmlc.causal_lm(model, max_context=4096), out_dir="out/vlm", opt="O3")
+art = ggml_compiler.compile(ggml_compiler.causal_lm(model, max_context=4096), out_dir="out/vlm",
+                            opt="O3")
 
 proc = AutoProcessor.from_pretrained(repo)
 inp = proc(text=prompt_with_image, images=[image], return_tensors="pt")   # resizing, tiling, patches: the caller's
-with ggmlc.Session(art.gguf) as s:
-    gen = ggmlc.Generator(s)
+with ggml_compiler.Session(art.gguf) as s:
+    gen = ggml_compiler.Generator(s)
     ids = gen.generate(inp["input_ids"][0].tolist(), max_new=128, pixels=inp["pixel_values"])   # SmolVLM
     ids = gen.generate(inp["input_ids"][0].tolist(), max_new=128, pixels=inp["pixel_values"],
                        grid_thw=inp["image_grid_thw"][0])                                          # Qwen3-VL
@@ -359,12 +368,11 @@ Qwen3-VL:
   `decode(token, position, rpos1, mask1)`, `generate(first, start, rstart)`), as all three
   M-RoPE streams are equal for text; `prefill_mm` takes `mrope [3, s]`, the (t, h, w) positions
   transformers' `get_rope_index` computes. `Generator` tracks them (`r_next`).
-- `encode(pixels [n, 1536], pos_idx [4, n], pos_w [4, n], vpos [n, 2])` takes one image's
-  patches as the processor flattens them (n = 4 * vision_tokens, a symbol). The tables that depend
-  on the image grid come from the caller: `ggmlc.llm.qwen3_vl_tables(grid_thw, pos_side, merge)`
-  computes them as transformers does (the bilinear taps into the learned position embedding, and
-  each patch's row and column for the 2-D rotary embedding). One image per `encode`; videos are
-  not supported.
+- `encode(pixels [n, 1536], pos_idx [4, n], pos_w [4, n], vpos [n, 2])` takes one image's patches as
+  the processor flattens them (n = 4 * vision_tokens, a symbol). The tables that depend on the image
+  grid come from the caller: `ggml_compiler.llm.qwen3_vl_tables(grid_thw, pos_side, merge)` computes
+  them as transformers does (the bilinear taps into the learned position embedding, and each patch's
+  row and column for the 2-D rotary embedding). One image per `encode`; videos are not supported.
 - Deepstack: the features of three vision layers are three more state buffers, added to the
   hidden states after the first three decoder layers at the image tokens.
 - Metadata `image`: `kind` ("qwen3_vl"), `token`, `rows`, `patch` (1536), `merge` (2) and
@@ -409,19 +417,22 @@ named flags, and includes the levels below it:
 | `assume_attended_rows` | O3 | Every attention query may attend to some key (a causal mask): flash attention drops its fully-masked-row guard |
 
 ```python
-ggmlc.compile(..., opt="O2")                                        # flash attention + table GELU
-ggmlc.compile(..., opt="O2", flags={"flash_attention": False})      # table GELU, f32 attention
-ggmlc.compile(..., flags={"hoist_invariants": False})               # O1 without loop hoisting
+ggml_compiler.compile(..., opt="O2")                                        # flash attention + table GELU
+ggml_compiler.compile(..., opt="O2", flags={"flash_attention": False})      # table GELU, f32 attention
+ggml_compiler.compile(..., flags={"hoist_invariants": False})               # O1 without loop hoisting
 ```
 
 `flash_attention` fuses eager attention (`matmul → scale → [mask | where] → softmax → matmul`)
-into `ggml_flash_attn_ext` for head sizes every backend supports (40, 64, 72, 80, 96, 112, 128,
-256). Masks stay finite, and fully masked query rows get PyTorch's uniform softmax.
+into `ggml_flash_attn_ext` for head sizes 40, 64, 72, 80, 96, 112, 128, 256 and 512. Every
+backend runs the first eight; CUDA runs 512 (Gemma 4) on Turing or newer GPUs with grouped-query
+heads, and elsewhere the runtime runs that attention as matmul, softmax, matmul, accumulating in
+f32 (`GGML_COMPILER_LOG=debug` says so at load). Masks stay finite, and fully masked query rows
+get PyTorch's uniform softmax. Attention left unfused accumulates its two matmuls in f32 too.
 
 A level never changes weight types; that is the [dtype policy](#weight-dtypes-and-quantization)'s
 job. Choices that an export script makes, such as compiling in a prompt layout, are recorded with
 `Program(..., specialized={"prompt_layout": "148 tokens, 2 images"})`. `report.json` (`options`),
-the GGUF (`ggmlc.options`) and `ggmlc inspect` show the level, every flag and those
+the GGUF (`ggml_compiler.options`) and `ggml-compiler inspect` show the level, every flag and those
 specializations.
 
 Some choices the runtime makes per backend, so one GGUF serves both:
@@ -431,8 +442,8 @@ Some choices the runtime makes per backend, so one GGUF serves both:
 - Exact tanh-GELU is ggml's `gelu` on a GPU (an f32 formula there) and the formula spelled out in
   ggml ops on CPU, whose `gelu` reads an fp16 table.
 
-Start any performance investigation with `ggmlc bench MODEL.gguf --profile`: it times every node
-and groups the cost by op and by PyTorch source line.
+Start any performance investigation with `ggml-compiler bench MODEL.gguf --profile`: it times every
+node and groups the cost by op and by PyTorch source line.
 
 ## Weight dtypes and quantization
 
@@ -452,7 +463,8 @@ rules:
 ```
 
 ```python
-art = ggmlc.compile(program, out_dir="out/smolvla-q4", dtype_policy="policy.yaml")  # or a DTypePolicy / dict
+# dtype_policy: a YAML file, a DTypePolicy or a dict
+art = ggml_compiler.compile(program, out_dir="out/smolvla-q4", dtype_policy="policy.yaml")
 ```
 
 Types: `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_1`, `q5_0`, `q5_1`, `iq4_nl`, `q4_k`, `q5_k`,
@@ -465,7 +477,7 @@ Types: `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_1`, `q5_0`, `q5_1`, `iq4_nl`, `
   its names. A pattern ending in `@<op>` applies only where that op reads the weight
   (`model.embed_tokens.weight@get_rows`, `...@mul_mat`); readers that want different types get one
   copy of the weight per type. llama.cpp stores Qwen3's tied embedding that way, as Q4_K for
-  lookups and Q6_K for the head; `ggmlc.llm.llama_cpp_policy` writes such rules.
+  lookups and Q6_K for the head; `ggml_compiler.llm.llama_cpp_policy` writes such rules.
 - `report.json` lists every weight's final type, why, and its relative error
   (`max|w − stored| / max|w|`).
 - `bf16` stores a bf16 checkpoint losslessly. `f16` is as fast on CPU and CUDA and more accurate,
@@ -482,7 +494,8 @@ directly:
 import modelopt.torch.quantization as mtq
 
 model = mtq.quantize(model, mtq.INT8_DEFAULT_CFG, forward_loop=calibrate)
-art = ggmlc.compile(model, example, "out/q", prequant=ggmlc.ModelOpt(int8="q8_0", int4="q4_0"))
+art = ggml_compiler.compile(model, example, "out/q",
+                            prequant=ggml_compiler.ModelOpt(int8="q8_0", int4="q4_0"))
 ```
 
 - Each enabled weight quantizer is applied once. The fake-quant weight is stored as `int8 → Q8_0`
@@ -499,11 +512,11 @@ art = ggmlc.compile(model, example, "out/q", prequant=ggmlc.ModelOpt(int8="q8_0"
 ## ONNX
 
 ```python
-art = ggmlc.compile("act.onnx", {"state": s, "front": a, "wrist": b}, "out/act-onnx")
+art = ggml_compiler.compile("act.onnx", {"state": s, "front": a, "wrist": b}, "out/act-onnx")
 ```
 
 ```bash
-ggmlc compile act.onnx --out out/act-onnx --input front:1x3x480x640:f32
+ggml-compiler compile act.onnx --out out/act-onnx --input front:1x3x480x640:f32
 ```
 
 Shapes must be static, either in the file or pinned with `input_shapes` / `--input`. Example
@@ -513,7 +526,7 @@ outputs. ONNX models compile to one stage, with the same optimizations as the Py
 ## Hand-tunable C++
 
 ```bash
-ggmlc compile examples/act/export.py:program --out out/act --emit gguf,cpp --name act
+ggml-compiler compile examples/act/export.py:program --out out/act --emit gguf,cpp --name act
 ```
 
 ```
@@ -528,71 +541,73 @@ out/act/
 
 ```bash
 cmake -S out/act/cpp -B out/act/build && cmake --build out/act/build -j      # builds runtime + ggml too
-# or link a prebuilt runtime: -DGGMLC_RUNTIME_LIB=$PWD/build-cuda/libggmlc_rt.so
+# or link a prebuilt runtime: -DGGML_COMPILER_RUNTIME_LIB=$PWD/build-cuda/libggml_compiler_rt.so
 out/act/build/act-check out/act/model.gguf out/act/example_inputs.bin cuda
 # actions    bit-identical  max|d| 0
 ```
 
-The generated library exposes the runtime's C API. `act_load(gguf, &opt)` replaces `ggmlc_load`
-and builds the stage graphs from `act.cpp` instead of the GGUF's program. Untouched, outputs are
-bit-identical to the runtime on the same backend and thread count. Edit `act.cpp` to fuse or
-reorder by hand; `act-check` then shows how far results move.
+The generated library exposes the runtime's C API. `act_load(gguf, &opt)` replaces
+`ggml_compiler_load` and builds the stage graphs from `act.cpp` instead of the GGUF's program.
+Untouched, outputs are bit-identical to the runtime on the same backend and thread count. Edit
+`act.cpp` to fuse or reorder by hand; `act-check` then shows how far results move.
 
 ## C API
 
 ```c
-#include "ggmlc_rt.h"
+#include "ggml_compiler_rt.h"
 
-if (!ggmlc_has_backend(GGMLC_BACKEND_CUDA)) { /* built without CUDA, or no device */ }
+if (!ggml_compiler_has_backend(GGML_COMPILER_BACKEND_CUDA)) { /* built without CUDA, or no device */ }
 
-ggmlc_options opt = ggmlc_default_options();
-opt.backend   = GGMLC_BACKEND_CUDA;      /* GGMLC_BACKEND_CPU, GGMLC_BACKEND_AUTO */
+ggml_compiler_options opt = ggml_compiler_default_options();
+opt.backend   = GGML_COMPILER_BACKEND_CUDA; /* GGML_COMPILER_BACKEND_CPU, GGML_COMPILER_BACKEND_AUTO */
 opt.device    = 0;
-opt.n_threads = 6;                       /* CPU threads; <= 0 means all */
+opt.n_threads = 6;                          /* CPU threads; <= 0 means all */
 
-ggmlc_model * m = ggmlc_load("out/smolvla/model.gguf", &opt);
-if (!m) { fprintf(stderr, "%s\n", ggmlc_last_error()); return 1; }
+ggml_compiler_model * m = ggml_compiler_load("out/smolvla/model.gguf", &opt);
+if (!m) { fprintf(stderr, "%s\n", ggml_compiler_last_error()); return 1; }
 
-for (int i = 0; i < ggmlc_n_inputs(m); i++) {
-    ggmlc_tensor_info info;
-    ggmlc_input_info(m, i, &info);       /* name, dtype, ndim, shape (PyTorch order), nbytes */
+for (int i = 0; i < ggml_compiler_n_inputs(m); i++) {
+    ggml_compiler_tensor_info info;
+    ggml_compiler_input_info(m, i, &info);  /* name, dtype, ndim, shape (PyTorch order), nbytes */
 }
 
-/* A program with symbols (ggmlc_n_symbols > 0) takes sizes per run: bind them from an input's
+/* A program with symbols (ggml_compiler_n_symbols > 0) takes sizes per run: bind them from an input's
    shape, or by name. Infos and nbytes then follow the binding. */
 const int64_t shape[2] = {1, 37};
-ggmlc_set_input_shape(m, "lang_tokens", 2, shape);     /* or ggmlc_set_symbol(m, "seq", 37) */
+ggml_compiler_set_input_shape(m, "lang_tokens", 2, shape);  /* or ggml_compiler_set_symbol(m, "seq", 37) */
 
-/* Several entry points (ggmlc_n_entries > 1): set any entry's inputs, then run it by name. */
-/* ggmlc_run_entry(m, "decode"); ggmlc_reset(m) zeroes the state (a KV cache). */
-/* ggmlc_metadata(m, "ggmlc.meta") is the program's own JSON metadata (an LLM's EOS ids, ...). */
+/* Several entry points (ggml_compiler_n_entries > 1): set any entry's inputs, then run it by name. */
+/* ggml_compiler_run_entry(m, "decode"); ggml_compiler_reset(m) zeroes the state (a KV cache). */
+/* ggml_compiler_metadata(m, "ggml_compiler.meta") is the program's own JSON metadata (an LLM's EOS
+   ids, ...). */
 
-ggmlc_set_input(m, "images.0", pixels, pixels_nbytes);
-ggmlc_set_input(m, "lang_tokens", tokens, tokens_nbytes);
+ggml_compiler_set_input(m, "images.0", pixels, pixels_nbytes);
+ggml_compiler_set_input(m, "lang_tokens", tokens, tokens_nbytes);
 /* ... remaining inputs ... */
-if (ggmlc_run(m) != 0) { fprintf(stderr, "%s\n", ggmlc_last_error()); }
-ggmlc_get_output(m, "x", actions, actions_nbytes);
+if (ggml_compiler_run(m) != 0) { fprintf(stderr, "%s\n", ggml_compiler_last_error()); }
+ggml_compiler_get_output(m, "x", actions, actions_nbytes);
 
-ggmlc_stats st;
-ggmlc_last_stats(m, &st);                /* st.ms_total, st.n_calls */
-for (int i = 0; i < ggmlc_n_stages(m); i++) {
+ggml_compiler_stats st;
+ggml_compiler_last_stats(m, &st);                /* st.ms_total, st.n_calls */
+for (int i = 0; i < ggml_compiler_n_stages(m); i++) {
     const char * name; double ms; int calls;
-    ggmlc_stage_stats(m, i, &name, &ms, &calls);
+    ggml_compiler_stage_stats(m, i, &name, &ms, &calls);
 }
-ggmlc_free(m);
+ggml_compiler_free(m);
 ```
 
 Every function returns 0 or a non-NULL handle on success. On failure it sets
-`ggmlc_last_error()`. Also in the header: `ggmlc_quantize` / `ggmlc_row_size` (ggml's encoders,
-used by the compiler) and `ggmlc_load_with` with the `ggmlc_build_*` functions that generated C++
-uses. `build/ggmlc-info MODEL.gguf [cpu|cuda]` prints a model's inputs and outputs.
+`ggml_compiler_last_error()`. Also in the header: `ggml_compiler_quantize` /
+`ggml_compiler_row_size` (ggml's encoders, used by the compiler) and `ggml_compiler_load_with` with
+the `ggml_compiler_build_*` functions that generated C++ uses. `build/ggml-compiler-info MODEL.gguf
+[cpu|cuda]` prints a model's inputs and outputs.
 
 ## CLI
 
 ```
-ggmlc compile SOURCE --out DIR [options]
-    SOURCE                     model.onnx, or path/to/script.py:name where name is a ggmlc.Program
-                               (or a function returning one)
+ggml-compiler compile SOURCE --out DIR [options]
+    SOURCE                     model.onnx, or path/to/script.py:name where name is a
+                               ggml_compiler.Program (or a function returning one)
     --emit gguf|cpp|gguf,cpp   default: gguf
     --name NAME                C++ project name (default: the output directory's)
     --policy FILE              weight dtype policy (YAML)
@@ -604,48 +619,51 @@ ggmlc compile SOURCE --out DIR [options]
     --backends cpu,cuda        load the result on these backends now, so unsupported nodes fail here
     --input NAME:SHAPE[:DTYPE] ONNX only: pin an input's shape, e.g. image:1x3x224x224:f32
 
-ggmlc inspect MODEL.gguf [--tensors]    stages, driver (loops, carries, scalars, slices), I/O,
-                                        op histogram, tensor types and sizes
-ggmlc run     MODEL.gguf --out out.npz [--inputs in.npz] [--backend B] [--threads N]
-ggmlc bench   MODEL.gguf [--inputs in.npz] [--backend B] [--threads N] [--warmup 5] [--iters 50]
-              [--profile [--top 15]]
-ggmlc verify  MODEL.gguf [--inputs in.npz --ref ref.npz] [--backend B] [--threads N] [--tol T]
-              compares with the outputs saved at compile time: max|d| / max(1, max|ref|), default
-              tolerance 1e-4 on CPU and 1e-2 on CUDA; NaN or inf always fails; exit status 1 on failure
+ggml-compiler inspect MODEL.gguf [--tensors]    stages, driver (loops, carries, scalars, slices),
+                                                I/O, op histogram, tensor types and sizes
+ggml-compiler run     MODEL.gguf --out out.npz [--inputs in.npz] [--backend B] [--threads N]
+ggml-compiler bench   MODEL.gguf [--inputs in.npz] [--backend B] [--threads N] [--warmup 5]
+                      [--iters 50] [--profile [--top 15]]
+ggml-compiler verify  MODEL.gguf [--inputs in.npz --ref ref.npz] [--backend B] [--threads N]
+                      [--tol T]
+                      compares with the outputs saved at compile time: max|d| / max(1, max|ref|),
+                      default tolerance 1e-4 on CPU and 1e-2 on CUDA; NaN or inf always fails;
+                      exit status 1 on failure
 ```
 
 `run`, `bench` and `verify` default to the `example_inputs.npz` written next to the model.
 
 ## When an op has no ggml lowering
 
-ggmlc first decomposes the op into ggml primitives. If that is impossible, compilation stops,
-listing every missing op once with its source line. It never inserts a silent slow path:
+ggml-compiler first decomposes the op into ggml primitives. If that is impossible, compilation
+stops, listing every missing op once with its source line. It never inserts a silent slow path:
 
 ```
-ggmlc: error: stage 'forward': 2 op(s) have no ggml lowering
+ggml-compiler: error: stage 'forward': 2 op(s) have no ggml lowering
   aten.erfinv.default                      my_model.py:88 in forward (+1 more)
   aten.atan.default                        my_model.py:88 in forward
-Register a lowering with @ggmlc.lowering, or change the model.
+Register a lowering with @ggml_compiler.lowering, or change the model.
 ```
 
-Register a lowering in terms of ops ggmlc already knows. A registered op is kept whole by the
-exporter, so the lowering sees it:
+Register a lowering in terms of ops ggml-compiler already knows. A registered op is kept whole by
+the exporter, so the lowering sees it:
 
 ```python
-@ggmlc.lowering(torch.ops.aten.hardswish.default)
-def hardswish(b: ggmlc.Builder, x):
+@ggml_compiler.lowering(torch.ops.aten.hardswish.default)
+def hardswish(b: ggml_compiler.Builder, x):
     return b.mul(x, b.scale(b.clamp(b.add_scalar(x, 3.0), min=0.0, max=6.0), s=1 / 6))
 ```
 
-The same rule applies at load time. If the chosen backend cannot run a node, `ggmlc_load` fails
-and lists the nodes.
+The same rule applies at load time. If the chosen backend cannot run a node, `ggml_compiler_load`
+fails and lists the nodes.
 
 ## Worked examples: LeRobot policies
 
-Each `examples/<name>/export.py` builds a `ggmlc.Program` from a LeRobot checkpoint, with the
-stage functions written so the reference run reproduces LeRobot's own inference. Latency is
+Each `examples/<name>/export.py` builds a `ggml_compiler.Program` from a LeRobot checkpoint, with
+the stage functions written so the reference run reproduces LeRobot's own inference. Latency is
 against the hand-written [vla.cpp](https://github.com/VinRobotics/vla.cpp) engines on one machine
 (i5-12400F with 6 threads, RTX 3060); f32 parity is the scaled error against PyTorch on CPU.
+[MODELS.md](MODELS.md) has the full results.
 
 | Policy | Example | Program | f32 parity | Latency vs vla.cpp |
 |---|---|---|---|---|

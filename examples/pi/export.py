@@ -1,5 +1,5 @@
-"""LeRobot pi0 and pi0.5 as two-stage ggmlc programs with a 10-step flow-matching loop:
-`ggmlc compile examples/pi/export.py:program --out out/pi0` (PI_CHECKPOINT picks the checkpoint;
+"""LeRobot pi0 and pi0.5 as two-stage ggml-compiler programs with a 10-step flow-matching loop:
+`ggml-compiler compile examples/pi/export.py:program --out out/pi0` (PI_CHECKPOINT picks the checkpoint;
 its config says which of the two it is).
 
 prefix: camera images (SigLIP), image masks, language tokens and mask -> the PaliGemma key/value
@@ -18,7 +18,7 @@ import os
 
 import torch
 
-import ggmlc
+import ggml_compiler
 
 CHECKPOINT = os.environ.get("PI_CHECKPOINT", "lerobot/pi0_libero_finetuned_v044")
 
@@ -181,7 +181,7 @@ def example_inputs(config, n_tokens: int = 12, empty_cameras: bool = False):
     return images, img_masks, lang_tokens, lang_masks, state, noise
 
 
-def program_from_policy(policy, empty_cameras: bool = False, n_tokens: int = 12) -> ggmlc.Program:
+def program_from_policy(policy, empty_cameras: bool = False, n_tokens: int = 12) -> ggml_compiler.Program:
     s = Stages(policy.model)
     images, img_masks, lang_tokens, lang_masks, state, noise = example_inputs(
         policy.config, n_tokens=n_tokens, empty_cameras=empty_cameras)
@@ -190,15 +190,15 @@ def program_from_policy(policy, empty_cameras: bool = False, n_tokens: int = 12)
         kv, pad = s.prefix(*prefix_ex)
     step_args = ["x", "t", "kv", "pad"] + ([] if s.pi05 else ["state"])
     step_ex = (noise, torch.ones(1), kv, pad) + (() if s.pi05 else (state,))
-    return ggmlc.Program(
+    return ggml_compiler.Program(
         root=policy.model,
-        stages={"prefix": ggmlc.Stage(s.prefix, prefix_ex), "step": ggmlc.Stage(s.step, step_ex)},
-        driver=ggmlc.Driver(
+        stages={"prefix": ggml_compiler.Stage(s.prefix, prefix_ex), "step": ggml_compiler.Stage(s.step, step_ex)},
+        driver=ggml_compiler.Driver(
             inputs=["images", "img_masks", "lang_tokens", "lang_masks"] + ([] if s.pi05 else ["state"]) + ["noise"],
             body=[
-                ggmlc.call("prefix", ["images", "img_masks", "lang_tokens", "lang_masks"], ["kv", "pad"]),
-                ggmlc.loop(s.n, carry={"x": "noise"}, scalars={"t": s.timesteps()},
-                           body=[ggmlc.call("step", step_args, ["x"])]),
+                ggml_compiler.call("prefix", ["images", "img_masks", "lang_tokens", "lang_masks"], ["kv", "pad"]),
+                ggml_compiler.loop(s.n, carry={"x": "noise"}, scalars={"t": s.timesteps()},
+                                   body=[ggml_compiler.call("step", step_args, ["x"])]),
             ],
             outputs=["x"],
         ),
@@ -206,5 +206,5 @@ def program_from_policy(policy, empty_cameras: bool = False, n_tokens: int = 12)
     )
 
 
-def program(checkpoint: str = CHECKPOINT, n_layers: int | None = None) -> ggmlc.Program:
+def program(checkpoint: str = CHECKPOINT, n_layers: int | None = None) -> ggml_compiler.Program:
     return program_from_policy(load(checkpoint, n_layers))

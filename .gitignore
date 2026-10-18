@@ -16,3 +16,7 @@ out/
 # Local notes and agent settings, not part of the project
 .claude/
 CLAUDE.md
+
+# Packaging
+dist/
+wheelhouse/

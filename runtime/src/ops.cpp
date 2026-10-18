@@ -1,18 +1,21 @@
 #include "ops.h"
 
-#include "ggmlc_ops.h"
+#include "ggml_compiler_ops.h"
 
+#include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
 
-namespace ggmlc {
+namespace ggml_compiler {
 
 namespace {
 
-thread_local bool g_gpu = false;  // the backend the graph is being built for is a GPU
+thread_local bool           g_gpu     = false;    // the backend the graph is being built for is a GPU
+thread_local ggml_backend_t g_backend = nullptr;  // and that backend, for ops that ask what it can run
 
 std::string shape_str(const int64_t * ne) {
     std::ostringstream os;
@@ -112,7 +115,7 @@ const std::unordered_map<std::string, Emit> & op_table() {
              if (ggml_is_transposed(a)) {
                  fail(n, "weight operand is transposed; it needs a cont first");
              }
-             return ggmlc::ops::mul_mat(ctx, a, b, n.p.contains("acc") && pi(n, "acc") != 0);
+             return ggml_compiler::ops::mul_mat(ctx, a, b, n.p.contains("acc") && pi(n, "acc") != 0);
          }},
 
         {"scale",
@@ -225,7 +228,18 @@ const std::unordered_map<std::string, Emit> & op_table() {
              if (mask && (mask->type != GGML_TYPE_F16 || !ggml_is_contiguous(mask) || q->ne[2] % mask->ne[2] != 0)) {
                  fail(n, "mask must be a contiguous f16 tensor broadcastable over heads");
              }
-             return ggmlc::ops::flash_attn(ctx, q, k, v, mask, pf(n, "scale"));
+             return ggml_compiler::ops::flash_attn(ctx, q, k, v, mask, pf(n, "scale"), [&n](ggml_tensor * t) {
+                 if (!g_backend || ggml_backend_supports_op(g_backend, t)) {
+                     return true;
+                 }
+                 const char * log = std::getenv("GGML_COMPILER_LOG");
+                 if (log && std::string(log) == "debug") {
+                     std::fprintf(stderr, "node %s: %s cannot run flash attention with head size %lld; running it as "
+                                  "matmul, softmax, matmul\n", n.id.c_str(), ggml_backend_name(g_backend),
+                                  (long long) t->src[0]->ne[0]);
+                 }
+                 return false;
+             });
          }},
 
         {"arange",
@@ -338,8 +352,10 @@ const std::unordered_map<std::string, Emit> & op_table() {
 
 }  // namespace
 
-ggml_tensor * emit_node(ggml_context * ctx, const NodeSpec & n, const std::vector<ggml_tensor *> & src, bool gpu) {
-    g_gpu              = gpu;
+ggml_tensor * emit_node(ggml_context * ctx, const NodeSpec & n, const std::vector<ggml_tensor *> & src,
+                        ggml_backend_t backend) {
+    g_backend          = backend;
+    g_gpu              = backend && ggml_backend_dev_type(ggml_backend_get_device(backend)) == GGML_BACKEND_DEVICE_TYPE_GPU;
     const auto & table = op_table();
     auto         it    = table.find(n.op);
     if (it == table.end()) {
@@ -361,4 +377,4 @@ ggml_tensor * emit_node(ggml_context * ctx, const NodeSpec & n, const std::vecto
     return t;
 }
 
-}  // namespace ggmlc
+}  // namespace ggml_compiler

@@ -8,10 +8,10 @@ import torch.nn as nn
 from helpers import assert_close, build_generated, check_generated
 from torch.export import Dim
 
-import ggmlc
-from ggmlc.ir import sym
-from ggmlc.ir.program import CompileError
-from ggmlc.runtime import GgmlcRuntimeError, Session
+import ggml_compiler
+from ggml_compiler.ir import sym
+from ggml_compiler.ir.program import CompileError
+from ggml_compiler.runtime import GgmlCompilerRuntimeError, Session
 
 TOL = {"cpu": 1e-5, "cuda": 3e-3}
 
@@ -35,9 +35,11 @@ def _encoder():
 
 
 def _single(model, example, dyn, **kw):
-    return ggmlc.Program(root=model, stages={"forward": ggmlc.Stage(model, example, dynamic_shapes=dyn)},
-                         driver=ggmlc.Driver(inputs=["x"], body=[ggmlc.call("forward", ["x"], ["y"])], outputs=["y"]),
-                         **kw)
+    return ggml_compiler.Program(root=model, stages={"forward": ggml_compiler.Stage(model, example,
+                                                                                    dynamic_shapes=dyn)},
+                                 driver=ggml_compiler.Driver(inputs=["x"], body=[ggml_compiler.call("forward", ["x"],
+                                                                                            ["y"])], outputs=["y"]),
+                                 **kw)
 
 
 @pytest.fixture(scope="module")
@@ -45,7 +47,7 @@ def encoder(tmp_path_factory):
     model = _encoder()
     prog = _single(model, (torch.randn(1, 10, 64),), ({1: Dim("seq", min=2, max=96)},))
     out = tmp_path_factory.mktemp("sym-encoder")
-    art = ggmlc.compile(prog, out_dir=out, emit=("gguf", "cpp"), name="enc")
+    art = ggml_compiler.compile(prog, out_dir=out, emit=("gguf", "cpp"), name="enc")
     return model, art, build_generated(out / "cpp", out / "build")
 
 
@@ -67,9 +69,9 @@ def test_encoder_any_length(encoder, backend):
 def test_encoder_out_of_range(encoder):
     _, art, _ = encoder
     with Session(art.gguf, backend="cpu") as s:
-        with pytest.raises(GgmlcRuntimeError, match="no seq in"):
+        with pytest.raises(GgmlCompilerRuntimeError, match="no seq in"):
             s.run(x=np.zeros((1, 97, 64), np.float32))
-        with pytest.raises(GgmlcRuntimeError, match="cannot have shape"):
+        with pytest.raises(GgmlCompilerRuntimeError, match="cannot have shape"):
             s.run(x=np.zeros((1, 10, 63), np.float32))
 
 
@@ -101,12 +103,13 @@ def test_two_symbols_and_a_symbolic_slice(tmp_path, backend):
     m = CachedAttention().eval()
     x, mask = torch.randn(1, 3, 64), torch.randn(1, 1, 3, 256)
     blocks = Dim("blocks", min=1, max=4)  # torch raises the min to 2: n_kv in {256, 384, 512}
-    prog = ggmlc.Program(
-        root=m, stages={"forward": ggmlc.Stage(m, (x, mask), dynamic_shapes=({1: Dim("s", min=2, max=64)},
+    prog = ggml_compiler.Program(
+        root=m, stages={"forward": ggml_compiler.Stage(m, (x, mask), dynamic_shapes=({1: Dim("s", min=2, max=64)},
                                                                               {2: Dim("s", min=2, max=64),
                                                                                3: 128 * blocks}))},
-        driver=ggmlc.Driver(inputs=["x", "mask"], body=[ggmlc.call("forward", ["x", "mask"], ["y"])], outputs=["y"]))
-    art = ggmlc.compile(prog, out_dir=tmp_path)
+        driver=ggml_compiler.Driver(inputs=["x", "mask"], body=[ggml_compiler.call("forward", ["x", "mask"], ["y"])],
+                                    outputs=["y"]))
+    art = ggml_compiler.compile(prog, out_dir=tmp_path)
     assert art.report.data["inputs"]["mask"]["shape"] == [1, 1, "s", "128*blocks"]
     with Session(art.gguf, backend=backend) as s:
         for n, kv in ((3, 256), (2, 384), (17, 512), (64, 256)):
@@ -134,16 +137,17 @@ def test_symbolic_values_cross_stages_and_loops(tmp_path, backend):
     x = torch.randn(1, 6, 16)
     S = Dim("s", min=2, max=40)
     h = m.encode(x)
-    prog = ggmlc.Program(
+    prog = ggml_compiler.Program(
         root=m,
-        stages={"encode": ggmlc.Stage(m.encode, (x,), dynamic_shapes=({1: S},)),
-                "step": ggmlc.Stage(m.step, (h, h, torch.ones(1)), dynamic_shapes=({1: S}, {1: S}, None))},
-        driver=ggmlc.Driver(inputs=["x"],
-                            body=[ggmlc.call("encode", ["x"], ["ctx"]),
-                                  ggmlc.loop(3, carry={"h": "ctx"}, scalars={"t": [1.0, 0.5, 0.25]},
-                                             body=[ggmlc.call("step", ["h", "ctx", "t"], ["h"])])],
-                            outputs=["h"]))
-    art = ggmlc.compile(prog, out_dir=tmp_path)
+        stages={"encode": ggml_compiler.Stage(m.encode, (x,), dynamic_shapes=({1: S},)),
+                "step": ggml_compiler.Stage(m.step, (h, h, torch.ones(1)), dynamic_shapes=({1: S}, {1: S}, None))},
+        driver=ggml_compiler.Driver(
+            inputs=["x"],
+            body=[ggml_compiler.call("encode", ["x"], ["ctx"]),
+                  ggml_compiler.loop(3, carry={"h": "ctx"}, scalars={"t": [1.0, 0.5, 0.25]},
+                                     body=[ggml_compiler.call("step", ["h", "ctx", "t"], ["h"])])],
+            outputs=["h"]))
+    art = ggml_compiler.compile(prog, out_dir=tmp_path)
     with Session(art.gguf, backend=backend) as s:
         for n in (6, 40, 2):
             xi = torch.randn(1, n, 16)
@@ -156,4 +160,4 @@ def test_symbolic_values_cross_stages_and_loops(tmp_path, backend):
 
 def test_a_dim_needs_a_max(tmp_path):
     with pytest.raises(CompileError, match="needs a max"):
-        ggmlc.compile(_single(_encoder(), (torch.randn(1, 10, 64),), ({1: Dim("seq")},)), out_dir=tmp_path)
+        ggml_compiler.compile(_single(_encoder(), (torch.randn(1, 10, 64),), ({1: Dim("seq")},)), out_dir=tmp_path)

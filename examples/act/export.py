@@ -1,4 +1,4 @@
-"""LeRobot ACT as a ggmlc program: `ggmlc compile examples/act/export.py:program --out out/act`.
+"""LeRobot ACT as a ggml-compiler program: `ggml-compiler compile examples/act/export.py:program --out out/act`.
 
 The compiled program maps normalized state and camera tensors to the normalized action chunk,
 exactly like `ACTPolicy.model`. Normalization stays with the caller (LeRobot's processors).
@@ -8,7 +8,7 @@ import os
 
 import torch
 
-import ggmlc
+import ggml_compiler
 
 CHECKPOINT = os.environ.get("ACT_CHECKPOINT", "khanhnd61/act_so101-multi-task-clean")
 
@@ -51,8 +51,8 @@ def example_inputs(config, image_size: tuple[int, int] | None = None) -> tuple[t
     return (state, *images)
 
 
-def program(checkpoint: str = CHECKPOINT, image_size: tuple[int, int] | None = None) -> ggmlc.Program:
+def program(checkpoint: str = CHECKPOINT, image_size: tuple[int, int] | None = None) -> ggml_compiler.Program:
     policy = load(checkpoint)
     cams = list(policy.config.image_features)
-    return ggmlc.Program.single(ACTInfer(policy.model).eval(), example_inputs(policy.config, image_size),
-                                input_names=["state", *cams], output_names=["actions"])
+    return ggml_compiler.Program.single(ACTInfer(policy.model).eval(), example_inputs(policy.config, image_size),
+                                        input_names=["state", *cams], output_names=["actions"])

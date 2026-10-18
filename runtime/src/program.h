@@ -1,7 +1,7 @@
-// Parsed form of the `ggmlc.program` JSON stored in a ggmlc GGUF.
+// Parsed form of the `ggml_compiler.program` JSON stored in a ggml-compiler GGUF.
 //
 // Everything here is already in ggml terms: `ne` is innermost-first and op parameters are
-// ggml axes. The Python emitter (ggmlc/emit/gguf_runtime.py) does the PyTorch-to-ggml
+// ggml axes. The Python emitter (ggml_compiler/emit/gguf_runtime.py) does the PyTorch-to-ggml
 // translation; the runtime only checks and dispatches.
 //
 // A dim may be symbolic (format 3): an expression over the program's symbols. Specs keep the
@@ -18,7 +18,7 @@
 #include "ggml.h"
 #include "nlohmann/json.hpp"
 
-namespace ggmlc {
+namespace ggml_compiler {
 
 constexpr int kFormatVersion    = 3;  // 2: loop slices; 3: symbolic dims
 constexpr int kMinFormatVersion = 1;
@@ -126,4 +126,4 @@ ProgramSpec parse_program(const std::string & json_text);
 
 ggml_type parse_type(const std::string & name);
 
-}  // namespace ggmlc
+}  // namespace ggml_compiler

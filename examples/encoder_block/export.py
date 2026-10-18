@@ -1,10 +1,11 @@
-"""A pre-norm transformer encoder block, compiled with `ggmlc compile examples/encoder_block/export.py:program`."""
+"""A pre-norm transformer encoder block, compiled with
+`ggml-compiler compile examples/encoder_block/export.py:program`."""
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-import ggmlc
+import ggml_compiler
 
 
 class EncoderBlock(nn.Module):
@@ -30,4 +31,4 @@ class EncoderBlock(nn.Module):
 def program():
     torch.manual_seed(0)
     block = EncoderBlock().eval()
-    return ggmlc.Program.single(block, (torch.randn(1, 64, 256),), input_names=["x"], output_names=["y"])
+    return ggml_compiler.Program.single(block, (torch.randn(1, 64, 256),), input_names=["x"], output_names=["y"])

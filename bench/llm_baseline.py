@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from ggmlc.verify.parity import logit_stats
+from ggml_compiler.verify.parity import logit_stats
 
 TEXT = Path(__file__).parent / "llama" / "text.txt"
 TYPES = ["bf16", "f16", "q8_0", "q4_k_m"]

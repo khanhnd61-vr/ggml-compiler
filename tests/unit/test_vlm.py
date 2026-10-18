@@ -1,4 +1,4 @@
-"""ggmlc.causal_lm on a tiny random SmolVLM: the encode entry (a symbolic tile count) writes image
+"""ggml_compiler.causal_lm on a tiny random SmolVLM: the encode entry (a symbolic tile count) writes image
 rows into state, prefill_mm places them at the image tokens' positions, and the logits and greedy
 tokens match transformers."""
 
@@ -7,8 +7,8 @@ import pytest
 import torch
 from helpers import assert_close
 
-import ggmlc
-from ggmlc.runtime import Session
+import ggml_compiler
+from ggml_compiler.runtime import Session
 
 transformers = pytest.importorskip("transformers")
 TOL = {"cpu": 1e-5, "cuda": 3e-3}
@@ -42,8 +42,9 @@ def vlm(tmp_path_factory):
     torch.manual_seed(0)
     model = _smolvlm()
     # max_prompt 8: image tokens span several prefill_mm calls
-    art = ggmlc.compile(ggmlc.causal_lm(model, max_context=768, max_prompt=8, logits="all", max_image_tokens=4 * ROWS),
-                        out_dir=tmp_path_factory.mktemp("vlm"))
+    art = ggml_compiler.compile(ggml_compiler.causal_lm(model, max_context=768, max_prompt=8, logits="all",
+                                                        max_image_tokens=4 * ROWS),
+                                out_dir=tmp_path_factory.mktemp("vlm"))
     return model, art
 
 
@@ -66,7 +67,7 @@ def test_image_logits_match_transformers(vlm, backend, tiles):
     with torch.no_grad():
         ref = model(input_ids=torch.tensor([ids]), pixel_values=pixels).logits[0].numpy()
     with Session(art.gguf, backend=backend) as s:
-        g = ggmlc.Generator(s)
+        g = ggml_compiler.Generator(s)
         g.reset()
         assert g.encode(pixels) == ROWS * tiles
         got = g.feed(ids)
@@ -82,7 +83,7 @@ def test_greedy_with_image_matches_generate(vlm, backend):
         ref = model.generate(input_ids=x, attention_mask=torch.ones_like(x), pixel_values=pixels, max_new_tokens=30,
                              min_new_tokens=30, do_sample=False, pad_token_id=0)[0, len(ids):].tolist()
     with Session(art.gguf, backend=backend) as s:
-        g = ggmlc.Generator(s)
+        g = ggml_compiler.Generator(s)
         assert g.generate(ids, max_new=30, stop=[], pixels=pixels) == ref
         eos = s.metadata["eos"]
         host = g.generate(ids, max_new=30, pixels=pixels)
@@ -94,7 +95,7 @@ def test_image_rows_are_checked(vlm):
     _, art = vlm
     pixels, ids = _prompt(2, seed=8)
     with Session(art.gguf, backend="cpu") as s:
-        g = ggmlc.Generator(s)
+        g = ggml_compiler.Generator(s)
         g.reset()
         with pytest.raises(ValueError, match="encode"):
             g.feed(ids)  # nothing encoded yet
@@ -112,15 +113,16 @@ def test_fast_build_and_cpp(tmp_path, backend):
 
     torch.manual_seed(0)
     model = _smolvlm()
-    art = ggmlc.compile(ggmlc.causal_lm(model, max_context=768, max_prompt=24, max_image_tokens=4 * ROWS), opt="O3",
-                        out_dir=tmp_path, emit=("gguf", "cpp"), name="vlm")
+    art = ggml_compiler.compile(ggml_compiler.causal_lm(model, max_context=768, max_prompt=24,
+                                                        max_image_tokens=4 * ROWS), opt="O3",
+                                out_dir=tmp_path, emit=("gguf", "cpp"), name="vlm")
     for st in ("encode", "prefill_mm"):
         assert art.report.data["stages"][st]["ops"]["flash_attn"] == 2
     pixels, ids = _prompt(3, seed=9)
     with torch.no_grad():
         ref = model(input_ids=torch.tensor([ids]), pixel_values=pixels).logits[0, -1].numpy()
     with Session(art.gguf, backend=backend) as s:
-        g = ggmlc.Generator(s)
+        g = ggml_compiler.Generator(s)
         g.reset()
         g.encode(pixels)
         assert_close({"logits": g.feed(ids)}, {"logits": ref}, 1e-2)
@@ -165,8 +167,9 @@ def _hf_qwen(model, ids, pixels, grid):
 def qwen3vl(tmp_path_factory):
     torch.manual_seed(0)
     model = _qwen3vl()
-    art = ggmlc.compile(ggmlc.causal_lm(model, max_context=768, max_prompt=8, logits="all", max_image_tokens=32),
-                        out_dir=tmp_path_factory.mktemp("qwen3vl"))
+    art = ggml_compiler.compile(ggml_compiler.causal_lm(model, max_context=768, max_prompt=8, logits="all",
+                                                        max_image_tokens=32),
+                                out_dir=tmp_path_factory.mktemp("qwen3vl"))
     return model, art
 
 
@@ -188,7 +191,7 @@ def test_qwen3vl_image_logits_match_transformers(qwen3vl, backend, hw):
     with torch.no_grad():
         ref = model(**_hf_qwen(model, ids, pixels, grid)).logits[0].numpy()
     with Session(art.gguf, backend=backend) as s:
-        g = ggmlc.Generator(s)
+        g = ggml_compiler.Generator(s)
         g.reset()
         assert g.encode(pixels, grid[0]) == hw[0] * hw[1] // 4
         got = g.feed(ids)
@@ -202,7 +205,7 @@ def test_qwen3vl_greedy_with_image_matches_generate(qwen3vl, backend):
         ref = model.generate(**_hf_qwen(model, ids, pixels, grid), max_new_tokens=30, min_new_tokens=30,
                              do_sample=False, pad_token_id=0)[0, len(ids):].tolist()
     with Session(art.gguf, backend=backend) as s:
-        g = ggmlc.Generator(s)
+        g = ggml_compiler.Generator(s)
         assert g.generate(ids, max_new=30, stop=[], pixels=pixels, grid_thw=grid[0]) == ref
         host = g.generate(ids, max_new=30, pixels=pixels, grid_thw=grid[0])
         assert g.generate(ids, max_new=30, pixels=pixels, grid_thw=grid[0], device=True) == host
@@ -213,8 +216,9 @@ def test_qwen3vl_fast_build_and_cpp(tmp_path, backend):
 
     torch.manual_seed(0)
     model = _qwen3vl()
-    art = ggmlc.compile(ggmlc.causal_lm(model, max_context=768, max_prompt=24, max_image_tokens=32), opt="O3",
-                        out_dir=tmp_path, emit=("gguf", "cpp"), name="qwen3vl")
+    art = ggml_compiler.compile(ggml_compiler.causal_lm(model, max_context=768, max_prompt=24, max_image_tokens=32),
+                                opt="O3",
+                                out_dir=tmp_path, emit=("gguf", "cpp"), name="qwen3vl")
     ops = art.report.data["stages"]
     assert ops["encode"]["ops"]["flash_attn"] == 3 and ops["prefill_mm"]["ops"]["flash_attn"] == 3
     assert ops["decode"]["ops"]["rope"] == 6  # text RoPE fused (q and k of 3 layers)
@@ -222,7 +226,7 @@ def test_qwen3vl_fast_build_and_cpp(tmp_path, backend):
     with torch.no_grad():
         ref = model(**_hf_qwen(model, ids, pixels, grid)).logits[0, -1].numpy()
     with Session(art.gguf, backend=backend) as s:
-        g = ggmlc.Generator(s)
+        g = ggml_compiler.Generator(s)
         g.reset()
         g.encode(pixels, grid[0])
         assert_close({"logits": g.feed(ids)}, {"logits": ref}, 1e-2)

@@ -9,8 +9,8 @@ import pytest
 import torch
 from helpers import assert_close, load_example
 
-import ggmlc
-from ggmlc.runtime import Session
+import ggml_compiler
+from ggml_compiler.runtime import Session
 
 pytestmark = pytest.mark.slow
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
@@ -33,7 +33,7 @@ def compiled(tmp_path_factory):
     path = out / "act.onnx"
     torch.onnx.export(stage.fn, stage.example_inputs, str(path), input_names=names, output_names=["actions"],
                       dynamo=True, external_data=False)
-    art = ggmlc.compile(path, dict(zip(names, stage.example_inputs)), out / "gguf")
+    art = ggml_compiler.compile(path, dict(zip(names, stage.example_inputs)), out / "gguf")
     with np.load(out / "gguf" / "reference_outputs.npz") as z:
         ort_out = {k: z[k] for k in z.files}
     with torch.no_grad():

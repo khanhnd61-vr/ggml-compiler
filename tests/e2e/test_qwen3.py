@@ -1,4 +1,4 @@
-"""L3 exit check: Qwen3-0.6B through ggmlc.causal_lm matches transformers in f32 (logits at the
+"""L3 exit check: Qwen3-0.6B through ggml_compiler.causal_lm matches transformers in f32 (logits at the
 acceptance tolerances, 64 greedy tokens exactly), on CPU and CUDA, from the host and the device
 generation loop."""
 
@@ -10,8 +10,8 @@ import pytest
 import torch
 from helpers import assert_close, scratch_dir
 
-import ggmlc
-from ggmlc.runtime import Session
+import ggml_compiler
+from ggml_compiler.runtime import Session
 
 pytestmark = pytest.mark.slow
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
@@ -37,7 +37,7 @@ def qwen(tmp_path_factory):
         greedy = model.generate(x, attention_mask=torch.ones_like(x), max_new_tokens=64, min_new_tokens=64,
                                 do_sample=False)[0, len(ids):].tolist()
     with scratch_dir(tmp_path_factory, "qwen3") as out:
-        art = ggmlc.compile(ggmlc.causal_lm(model, max_context=1024, max_prompt=512), out_dir=out)
+        art = ggml_compiler.compile(ggml_compiler.causal_lm(model, max_context=1024, max_prompt=512), out_dir=out)
         del model
         yield art, ids, ref, greedy
 
@@ -45,7 +45,7 @@ def qwen(tmp_path_factory):
 def test_last_logits(qwen, backend):
     art, ids, ref, _ = qwen
     with Session(art.gguf, backend=backend) as s:
-        g = ggmlc.Generator(s)
+        g = ggml_compiler.Generator(s)
         g.reset()
         assert_close({"logits": g.feed(ids)}, {"logits": ref}, ACCEPT[backend])
 
@@ -54,7 +54,7 @@ def test_last_logits(qwen, backend):
 def test_greedy_64(qwen, backend, device):
     art, ids, _, greedy = qwen
     with Session(art.gguf, backend=backend) as s:
-        got = ggmlc.Generator(s).generate(ids, max_new=64, stop=[] if not device else None, device=device)
+        got = ggml_compiler.Generator(s).generate(ids, max_new=64, stop=[] if not device else None, device=device)
         eos = s.metadata["eos"]
     # The device loop stops at the model's EOS; the reference ran on without stopping.
     assert got == greedy[:len(got)] and (len(got) == 64 or got[-1] in eos)

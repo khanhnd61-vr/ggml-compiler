@@ -1,0 +1,61 @@
+# Builds the sdist and the Linux x86-64 wheel, tests the wheel, and publishes both to PyPI when a
+# v* tag is pushed. Publishing uses PyPI trusted publishing: no token, but the project on PyPI must
+# list this repository, this workflow (release.yml) and the environment "pypi" as a publisher.
+# Run it by hand (workflow_dispatch) to build and test without publishing.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build
+      - run: python -m build --sdist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  wheel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "cibuildwheel>=3,<4"
+      - run: cibuildwheel --output-dir wheelhouse
+        env:
+          # The runtime is loaded with ctypes (py3-none wheel): one build serves every Python.
+          CIBW_BUILD: cp312-manylinux_x86_64
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          # Portable CPU code: x86-64-v3 (AVX2, FMA, F16C), not the build machine's CPU.
+          CIBW_ENVIRONMENT: SKBUILD_CMAKE_DEFINE="GGML_NATIVE=OFF"
+          CIBW_BEFORE_TEST: pip install cmake torch --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
+          CIBW_TEST_COMMAND: python {project}/tests/wheel_smoke.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel
+          path: wheelhouse/*.whl
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [sdist, wheel]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1

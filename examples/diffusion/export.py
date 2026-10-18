@@ -1,5 +1,5 @@
-"""LeRobot Diffusion Policy as a ggmlc program with the whole denoising loop on device:
-`ggmlc compile examples/diffusion/export.py:program --out out/diffusion`.
+"""LeRobot Diffusion Policy as a ggml-compiler program with the whole denoising loop on device:
+`ggml-compiler compile examples/diffusion/export.py:program --out out/diffusion`.
 
 encode: state and camera history -> the U-Net's global conditioning vector.
 step:   one scheduler step: noise prediction from the 1-D U-Net, then the DDPM/DDIM update.
@@ -15,7 +15,7 @@ import os
 
 import torch
 
-import ggmlc
+import ggml_compiler
 
 CHECKPOINT = os.environ.get("DIFFUSION_CHECKPOINT", "lerobot/diffusion_pusht")
 
@@ -126,7 +126,7 @@ def step_noise(model, batch: int, seed: int = 1) -> torch.Tensor:
     return torch.stack([torch.randn(shape) if t > 0 else torch.zeros(shape) for t in ts])
 
 
-def program_from_policy(policy, inputs: dict[str, torch.Tensor] | None = None, seed: int = 1) -> ggmlc.Program:
+def program_from_policy(policy, inputs: dict[str, torch.Tensor] | None = None, seed: int = 1) -> ggml_compiler.Program:
     model = policy.diffusion
     st = Stages(model)
     inputs = inputs or example_inputs(policy.config)
@@ -139,24 +139,24 @@ def program_from_policy(policy, inputs: dict[str, torch.Tensor] | None = None, s
     # broadcast against x; t is (B,), one timestep per batch row as the U-Net expects.
     first = [torch.full((B,) if k == "t" else (1,), v[0]) for k, v in sched.items()]
     stages = {
-        "encode": ggmlc.Stage(st.encode, (inputs["state"], inputs["images"])),
-        "step": ggmlc.Stage(st.step, (inputs["noise"], cond, zs[0], *first)),
-        "finish": ggmlc.Stage(st.finish, (inputs["noise"],)),
+        "encode": ggml_compiler.Stage(st.encode, (inputs["state"], inputs["images"])),
+        "step": ggml_compiler.Stage(st.step, (inputs["noise"], cond, zs[0], *first)),
+        "finish": ggml_compiler.Stage(st.finish, (inputs["noise"],)),
     }
-    driver = ggmlc.Driver(
+    driver = ggml_compiler.Driver(
         inputs=["state", "images", "noise", "step_noise"],
         body=[
-            ggmlc.call("encode", ["state", "images"], ["cond"]),
-            ggmlc.loop(n, [ggmlc.call("step", ["x", "cond", "z", *sched], ["x"])],
-                       carry={"x": "noise"}, scalars=sched, slices={"z": "step_noise"}),
-            ggmlc.call("finish", ["x"], ["actions"]),
+            ggml_compiler.call("encode", ["state", "images"], ["cond"]),
+            ggml_compiler.loop(n, [ggml_compiler.call("step", ["x", "cond", "z", *sched], ["x"])],
+                               carry={"x": "noise"}, scalars=sched, slices={"z": "step_noise"}),
+            ggml_compiler.call("finish", ["x"], ["actions"]),
         ],
         outputs=["actions"],
         examples={**inputs, "step_noise": zs},
     )
-    return ggmlc.Program(root=model, stages=stages, driver=driver)
+    return ggml_compiler.Program(root=model, stages=stages, driver=driver)
 
 
 def program(checkpoint: str = CHECKPOINT, scheduler: str | None = None,
-            num_inference_steps: int | None = None) -> ggmlc.Program:
+            num_inference_steps: int | None = None) -> ggml_compiler.Program:
     return program_from_policy(load(checkpoint, scheduler, num_inference_steps))

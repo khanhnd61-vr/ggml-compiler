@@ -8,9 +8,9 @@ import numpy as np
 import pytest
 from helpers import assert_close, build_generated, check_generated, load_example, scratch_dir
 
-import ggmlc
-import ggmlc.runtime
-from ggmlc.runtime import Session
+import ggml_compiler
+import ggml_compiler.runtime
+from ggml_compiler.runtime import Session
 
 pytestmark = pytest.mark.slow
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
@@ -28,7 +28,7 @@ def compiled(tmp_path_factory):
     except Exception as e:  # checkpoint not in the local cache
         pytest.skip(f"cannot load {smolvla_example.CHECKPOINT}: {e}")
     with scratch_dir(tmp_path_factory, "smolvla") as out:
-        art = ggmlc.compile(program, out_dir=out)
+        art = ggml_compiler.compile(program, out_dir=out)
         with np.load(out / "example_inputs.npz") as z:
             inputs = {k: z[k] for k in z.files}
         with np.load(out / "reference_outputs.npz") as z:
@@ -58,7 +58,7 @@ def test_smolvla_parity_at_o0(compiled, backend, tmp_path_factory):
     """Without the optional rewrites (and so without hoisting) SmolVLA still compiles and matches."""
     _, inputs, refs = compiled
     with scratch_dir(tmp_path_factory, "smolvla-o0") as out:
-        art = ggmlc.compile(smolvla_example.program(), out_dir=out, opt="O0")
+        art = ggml_compiler.compile(smolvla_example.program(), out_dir=out, opt="O0")
         assert set(art.program.stages) == {"prefix", "step"}
         with Session(art.gguf, backend=backend) as s:
             got = s.run(**inputs)
@@ -75,7 +75,7 @@ def quantized(request, tmp_path_factory):
     except Exception as e:
         pytest.skip(f"cannot load {smolvla_example.CHECKPOINT}: {e}")
     with scratch_dir(tmp_path_factory, f"smolvla-{request.param}") as out:
-        art = ggmlc.compile(program, out_dir=out, dtype_policy=POLICIES / f"policy-{request.param}.yaml")
+        art = ggml_compiler.compile(program, out_dir=out, dtype_policy=POLICIES / f"policy-{request.param}.yaml")
         with np.load(out / "example_inputs.npz") as z:
             inputs = {k: z[k] for k in z.files}
         with np.load(out / "reference_outputs.npz") as z:
@@ -104,7 +104,8 @@ def test_smolvla_modelopt_expert(cfg, tmp_path):
     except Exception as e:
         pytest.skip(f"cannot load {smolvla_example.CHECKPOINT}: {e}")
     smolvla_example.quantize_expert(policy, cfg)
-    art = ggmlc.compile(smolvla_example.program_from_policy(policy), out_dir=tmp_path, prequant=ggmlc.ModelOpt())
+    art = ggml_compiler.compile(smolvla_example.program_from_policy(policy), out_dir=tmp_path,
+                                prequant=ggml_compiler.ModelOpt())
     pre = art.report.data["prequant"]
     weights = pre["weights"]
     assert len(weights) >= 16 * 6 and all("lm_expert" in k for k in weights)
@@ -121,10 +122,10 @@ def test_smolvla_generated_cpp_is_bit_identical(tmp_path):
         program = smolvla_example.program()
     except Exception as e:
         pytest.skip(f"cannot load {smolvla_example.CHECKPOINT}: {e}")
-    art = ggmlc.compile(program, out_dir=tmp_path, emit=("gguf", "cpp"), name="smolvla", precision="fast",
-                        dtype_policy=POLICIES / "policy-cuda.yaml")
+    art = ggml_compiler.compile(program, out_dir=tmp_path, emit=("gguf", "cpp"), name="smolvla", precision="fast",
+                                dtype_policy=POLICIES / "policy-cuda.yaml")
     src = (tmp_path / "cpp" / "smolvla.cpp").read_text()
     assert all(f"build_{s}" in src for s in ("prefix", "step", "step_invariant"))
     binary = build_generated(tmp_path / "cpp", tmp_path / "build")
-    for backend in ["cpu"] + (["cuda"] if ggmlc.runtime.has_backend("cuda") else []):
+    for backend in ["cpu"] + (["cuda"] if ggml_compiler.runtime.has_backend("cuda") else []):
         check_generated(art, binary, backend)

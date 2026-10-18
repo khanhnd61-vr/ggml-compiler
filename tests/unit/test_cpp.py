@@ -9,7 +9,7 @@ import torch.nn.functional as F
 from helpers import build_generated, check_generated
 from test_driver import _flow_program
 
-import ggmlc
+import ggml_compiler
 
 pytestmark = pytest.mark.skipif(shutil.which("cmake") is None, reason="needs cmake")
 
@@ -55,7 +55,7 @@ def kitchen_sink(tmp_path_factory):
     arts = {}
     for precision in ("exact", "fast"):
         out = tmp_path_factory.mktemp(f"sink-{precision}")
-        art = ggmlc.compile(m, inputs, out, emit=("gguf", "cpp"), precision=precision, name="sink")
+        art = ggml_compiler.compile(m, inputs, out, emit=("gguf", "cpp"), precision=precision, name="sink")
         arts[precision] = (art, build_generated(out / "cpp", out / "build"))
     return arts
 
@@ -71,7 +71,7 @@ def test_generated_matches_runtime(kitchen_sink, precision, backend):
 
 def test_generated_loop_program(backend, tmp_path):
     _, _, _, program = _flow_program()
-    art = ggmlc.compile(program, out_dir=tmp_path, emit=("gguf", "cpp"), name="flow")
+    art = ggml_compiler.compile(program, out_dir=tmp_path, emit=("gguf", "cpp"), name="flow")
     src = (tmp_path / "cpp" / "flow.cpp").read_text()
     assert "build_encode" in src and "build_step" in src  # one builder per stage
     assert "enc_weight" in src  # weights named after the module tree

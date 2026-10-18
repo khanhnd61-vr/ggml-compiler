@@ -1,4 +1,4 @@
-"""LeRobot Diffusion Policy (lerobot/diffusion_pusht): the whole sampler as one ggmlc program.
+"""LeRobot Diffusion Policy (lerobot/diffusion_pusht): the whole sampler as one ggml-compiler program.
 
 The stage functions reproduce LeRobot's own generate_actions bit for bit (DDIM, and DDPM with
 LeRobot's seeded per-step noise passed in as a loop slice), and the compiled program matches
@@ -14,8 +14,8 @@ import pytest
 import torch
 from helpers import assert_close, build_generated, check_generated, load_example, scratch_dir
 
-import ggmlc
-from ggmlc.runtime import Session
+import ggml_compiler
+from ggml_compiler.runtime import Session
 
 pytestmark = pytest.mark.slow
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
@@ -37,14 +37,14 @@ def _load(**kw):
 def ddim(tmp_path_factory):
     policy = _load(scheduler="DDIM", num_inference_steps=10)
     with scratch_dir(tmp_path_factory, "dp-ddim") as out:
-        yield policy, ggmlc.compile(dp.program_from_policy(policy), out_dir=out)
+        yield policy, ggml_compiler.compile(dp.program_from_policy(policy), out_dir=out)
 
 
 @pytest.fixture(scope="module")
 def ddpm(tmp_path_factory):
     policy = _load()
     with scratch_dir(tmp_path_factory, "dp-ddpm") as out:
-        yield policy, ggmlc.compile(dp.program_from_policy(policy, seed=1), out_dir=out)
+        yield policy, ggml_compiler.compile(dp.program_from_policy(policy, seed=1), out_dir=out)
 
 
 def _lerobot_actions(policy, seed=1):
@@ -94,8 +94,8 @@ def test_graph_shape(ddim):
 def generated(tmp_path_factory):
     policy = _load(scheduler="DDIM", num_inference_steps=10)
     with scratch_dir(tmp_path_factory, "dp-cpp") as out:
-        art = ggmlc.compile(dp.program_from_policy(policy), out_dir=out, emit=("gguf", "cpp"), name="diffusion",
-                            dtype_policy=Path(dp.__file__).parent / "policy-f16.yaml")
+        art = ggml_compiler.compile(dp.program_from_policy(policy), out_dir=out, emit=("gguf", "cpp"), name="diffusion",
+                                    dtype_policy=Path(dp.__file__).parent / "policy-f16.yaml")
         yield art, build_generated(out / "cpp", out / "build")
 
 

@@ -8,7 +8,7 @@ import pytest
 import torch
 from helpers import check_stage
 
-from ggmlc.ir import Builder, Stage, TensorType, Weight
+from ggml_compiler.ir import Builder, Stage, TensorType, Weight
 
 
 def _stage(shapes, build, name="op"):

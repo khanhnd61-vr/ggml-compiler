@@ -1,5 +1,5 @@
-"""LeRobot GR00T N1.7 as a three-stage ggmlc program with a 4-step flow-matching loop:
-`ggmlc compile examples/groot/export.py:program --out out/groot`.
+"""LeRobot GR00T N1.7 as a three-stage ggml-compiler program with a 4-step flow-matching loop:
+`ggml-compiler compile examples/groot/export.py:program --out out/groot`.
 
 backbone: Qwen3-VL (Cosmos-Reason2-2B) vision tower on the processor's patches, then the
           language model's first `select_layer` layers -> the pre-norm hidden states.
@@ -23,7 +23,7 @@ import types
 
 import torch
 
-import ggmlc
+import ggml_compiler
 
 CHECKPOINT = os.environ.get("GROOT_CHECKPOINT", "/mnt/khanh/hf_data/torch/nvidia__GR00T-N1.7-LIBERO/libero_object")
 EMBODIMENT = os.environ.get("GROOT_EMBODIMENT", "libero_sim")
@@ -202,27 +202,28 @@ def example_inputs(model, instruction: str = "pick up the alphabet soup and plac
     return enc, state, noise
 
 
-def program_from_model(model, checkpoint: str = CHECKPOINT, embodiment: str = EMBODIMENT) -> ggmlc.Program:
+def program_from_model(model, checkpoint: str = CHECKPOINT, embodiment: str = EMBODIMENT) -> ggml_compiler.Program:
     enc, state, noise = example_inputs(model)
     s = Stages(model, enc, embodiment_id(checkpoint, embodiment))
     bb_ex = (enc["pixel_values"], enc["input_ids"], enc["attention_mask"])
     with torch.no_grad():
         feats = s.backbone(*bb_ex)
         vl, sf = s.encode(feats, state)
-    return ggmlc.Program(
+    return ggml_compiler.Program(
         root=model,
         stages={
-            "backbone": ggmlc.Stage(s.backbone, bb_ex),
-            "encode": ggmlc.Stage(s.encode, (feats, state)),
-            "step": ggmlc.Stage(s.step, (noise, torch.zeros(1), vl, sf, enc["attention_mask"])),
+            "backbone": ggml_compiler.Stage(s.backbone, bb_ex),
+            "encode": ggml_compiler.Stage(s.encode, (feats, state)),
+            "step": ggml_compiler.Stage(s.step, (noise, torch.zeros(1), vl, sf, enc["attention_mask"])),
         },
-        driver=ggmlc.Driver(
+        driver=ggml_compiler.Driver(
             inputs=["pixel_values", "input_ids", "attention_mask", "state", "noise"],
             body=[
-                ggmlc.call("backbone", ["pixel_values", "input_ids", "attention_mask"], ["features"]),
-                ggmlc.call("encode", ["features", "state"], ["vl", "state_features"]),
-                ggmlc.loop(s.n, carry={"x": "noise"}, scalars={"t": s.timesteps()},
-                           body=[ggmlc.call("step", ["x", "t", "vl", "state_features", "attention_mask"], ["x"])]),
+                ggml_compiler.call("backbone", ["pixel_values", "input_ids", "attention_mask"], ["features"]),
+                ggml_compiler.call("encode", ["features", "state"], ["vl", "state_features"]),
+                ggml_compiler.loop(
+                    s.n, carry={"x": "noise"}, scalars={"t": s.timesteps()},
+                    body=[ggml_compiler.call("step", ["x", "t", "vl", "state_features", "attention_mask"], ["x"])]),
             ],
             outputs=["x"],
         ),
@@ -234,5 +235,5 @@ def program_from_model(model, checkpoint: str = CHECKPOINT, embodiment: str = EM
     )
 
 
-def program(checkpoint: str = CHECKPOINT, embodiment: str = EMBODIMENT) -> ggmlc.Program:
+def program(checkpoint: str = CHECKPOINT, embodiment: str = EMBODIMENT) -> ggml_compiler.Program:
     return program_from_model(load(checkpoint), checkpoint, embodiment)

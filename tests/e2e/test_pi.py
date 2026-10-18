@@ -1,8 +1,8 @@
-"""LeRobot pi0 (lerobot/pi0_libero_finetuned_v044) and pi0.5 as ggmlc programs.
+"""LeRobot pi0 (lerobot/pi0_libero_finetuned_v044) and pi0.5 as ggml-compiler programs.
 
 Parity runs on the real weights with the language model and the expert cut to 2 layers each
 (full vision tower): the same graph as the 18-layer model, small enough for the test suite. The
-full-size builds are in docs/USAGE.md's examples table; GGMLC_BIG=1 runs a full-size check here too.
+full-size builds are in docs/USAGE.md's examples table; GGML_COMPILER_BIG=1 runs a full-size check here too.
 """
 
 import importlib.util
@@ -13,8 +13,8 @@ import pytest
 import torch
 from helpers import assert_close, load_example, scratch_dir
 
-import ggmlc
-from ggmlc.runtime import Session
+import ggml_compiler
+from ggml_compiler.runtime import Session
 
 pytestmark = pytest.mark.slow
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
@@ -37,7 +37,7 @@ def _load(kind, **kw):
 def shallow(request, tmp_path_factory):
     policy = _load(request.param, n_layers=2)
     with scratch_dir(tmp_path_factory, request.param) as out:  # ~5 GB each
-        art = ggmlc.compile(pi.program_from_policy(policy), out_dir=out)
+        art = ggml_compiler.compile(pi.program_from_policy(policy), out_dir=out)
         yield request.param, policy, art
 
 
@@ -65,7 +65,7 @@ def test_pi_parity(shallow, backend):
 def test_graph_is_lean(shallow):
     """K/V heads shared through mul_mat broadcasting (no [S, 8 heads, 256] repeat), exact GELU
     as one backend-aware op, the loop-invariant prefix-key work hoisted out of the loop."""
-    from ggmlc.cli import _read_gguf
+    from ggml_compiler.cli import _read_gguf
 
     _, _, art = shallow
     program, _, _ = _read_gguf(str(art.gguf))
@@ -77,13 +77,14 @@ def test_graph_is_lean(shallow):
     assert stages["prefix"]["ops"]["gelu_tanh"] > 0 and "step.invariant" in stages
 
 
-@pytest.mark.skipif(not os.environ.get("GGMLC_BIG"), reason="full-size pi0: ~4 min and ~13 GB of RAM (GGMLC_BIG=1)")
+@pytest.mark.skipif(not os.environ.get("GGML_COMPILER_BIG"),
+                    reason="full-size pi0: ~4 min and ~13 GB of RAM (GGML_COMPILER_BIG=1)")
 def test_pi0_full_size_bf16(tmp_path, backend):
     from pathlib import Path
 
     policy = _load("pi0")
-    art = ggmlc.compile(pi.program_from_policy(policy), out_dir=tmp_path,
-                        dtype_policy=Path(pi.__file__).parent / "policy-bf16.yaml")
+    art = ggml_compiler.compile(pi.program_from_policy(policy), out_dir=tmp_path,
+                                dtype_policy=Path(pi.__file__).parent / "policy-bf16.yaml")
     del policy
     ins = dict(np.load(art.out_dir / "example_inputs.npz"))
     with Session(art.gguf, backend=backend) as s:

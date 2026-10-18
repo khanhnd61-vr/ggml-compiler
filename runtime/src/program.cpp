@@ -7,7 +7,7 @@
 
 using nlohmann::json;
 
-namespace ggmlc {
+namespace ggml_compiler {
 
 ggml_type parse_type(const std::string & name) {
     for (int t = 0; t < GGML_TYPE_COUNT; t++) {
@@ -56,7 +56,7 @@ void Expr::symbols(std::vector<bool> & used) const {
     for (const auto & a : args) a.symbols(used);
 }
 
-// A dim in the JSON: an integer, a symbol name, or [op, operand...] (see ggmlc/ir/sym.py).
+// A dim in the JSON: an integer, a symbol name, or [op, operand...] (see ggml_compiler/ir/sym.py).
 static Expr parse_dim(const json & j, const std::vector<Symbol> & symbols) {
     Expr e;
     if (j.is_number_integer()) {
@@ -301,4 +301,4 @@ ProgramSpec parse_program(const std::string & json_text) {
     return prog;
 }
 
-}  // namespace ggmlc
+}  // namespace ggml_compiler

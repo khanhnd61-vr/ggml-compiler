@@ -1,8 +1,8 @@
-# llama-logits: dumps llama.cpp's logits for a token sequence, for ggmlc's KL / top-1 comparison.
+# llama-logits: dumps llama.cpp's logits for a token sequence, for ggml-compiler's KL / top-1 comparison.
 # Links an existing llama.cpp build (it is never rebuilt here):
 #   cmake -S bench/llama -B DIR -DLLAMA_SRC=.deps/llama.cpp-b11223 -DLLAMA_BUILD=/path/to/llama.cpp/build
 cmake_minimum_required(VERSION 3.22)
-project(ggmlc_llama_bench CXX)
+project(ggml_compiler_llama_bench CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(LLAMA_SRC "" CACHE PATH "llama.cpp source tree")
 set(LLAMA_BUILD "" CACHE PATH "llama.cpp build directory (holds bin/libllama.so)")

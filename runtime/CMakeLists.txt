@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.22)
-project(ggmlc_rt VERSION 0.1.0 LANGUAGES C CXX)
+# The version lives in ggml_compiler/__init__.py; the runtime reports the same one.
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/../ggml_compiler/__init__.py" _version_line REGEX "^__version__ = ")
+string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" GGML_COMPILER_VERSION "${_version_line}")
+project(ggml_compiler_rt VERSION ${GGML_COMPILER_VERSION} LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -11,11 +14,11 @@ endif()
 
 # ggml comes from a pinned llama.cpp release tarball. The source tree is shared by every
 # build directory (CPU, CUDA, ...) so it is downloaded once; each build keeps its own
-# binary dir. Override GGMLC_DEPS_DIR to keep it elsewhere.
-set(GGMLC_LLAMA_TAG "b11223" CACHE STRING "llama.cpp tag providing ggml")
-set(GGMLC_DEPS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../.deps" CACHE PATH "Where fetched sources live")
+# binary dir. Override GGML_COMPILER_DEPS_DIR to keep it elsewhere.
+set(GGML_COMPILER_LLAMA_TAG "b11223" CACHE STRING "llama.cpp tag providing ggml")
+set(GGML_COMPILER_DEPS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../.deps" CACHE PATH "Where fetched sources live")
 
-# ggml is linked statically into libggmlc_rt so the Python bindings load a single library.
+# ggml is linked statically into libggml_compiler_rt so the Python bindings load a single library.
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(GGML_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(GGML_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -29,31 +32,42 @@ set(GGML_CUDA_GRAPHS_DEFAULT ON)
 
 include(FetchContent)
 FetchContent_Declare(ggml
-    URL https://github.com/ggml-org/llama.cpp/archive/refs/tags/${GGMLC_LLAMA_TAG}.tar.gz
-    SOURCE_DIR ${GGMLC_DEPS_DIR}/llama.cpp-${GGMLC_LLAMA_TAG}
+    URL https://github.com/ggml-org/llama.cpp/archive/refs/tags/${GGML_COMPILER_LLAMA_TAG}.tar.gz
+    SOURCE_DIR ${GGML_COMPILER_DEPS_DIR}/llama.cpp-${GGML_COMPILER_LLAMA_TAG}
     SOURCE_SUBDIR ggml
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
 FetchContent_MakeAvailable(ggml)
 
-add_library(ggmlc_rt SHARED
-    src/ggmlc_rt.cpp
+add_library(ggml_compiler_rt SHARED
+    src/ggml_compiler_rt.cpp
     src/program.cpp
     src/ops.cpp
 )
-target_include_directories(ggmlc_rt
+target_include_directories(ggml_compiler_rt
     PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/include
-            ${ggml_SOURCE_DIR}/ggml/include  # generated builders call ggml through libggmlc_rt
+            ${ggml_SOURCE_DIR}/ggml/include  # generated builders call ggml through libggml_compiler_rt
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
             ${ggml_SOURCE_DIR}/vendor   # nlohmann/json.hpp ships in the llama.cpp tarball
 )
-target_link_libraries(ggmlc_rt PRIVATE ggml)
-target_compile_definitions(ggmlc_rt PRIVATE GGMLC_RT_BUILD GGMLC_LLAMA_TAG="${GGMLC_LLAMA_TAG}")
+target_link_libraries(ggml_compiler_rt PRIVATE ggml)
+target_compile_definitions(ggml_compiler_rt PRIVATE GGML_COMPILER_RT_BUILD
+                           GGML_COMPILER_LLAMA_TAG="${GGML_COMPILER_LLAMA_TAG}"
+                           GGML_COMPILER_VERSION="${PROJECT_VERSION}")
 if(GGML_CUDA)
-    target_compile_definitions(ggmlc_rt PRIVATE GGMLC_HAVE_CUDA)
+    target_compile_definitions(ggml_compiler_rt PRIVATE GGML_COMPILER_HAVE_CUDA)
 endif()
-set_target_properties(ggmlc_rt PROPERTIES C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden)
+set_target_properties(ggml_compiler_rt PROPERTIES C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden)
 
-# Plain C on purpose: keeps ggmlc_rt.h honest as a C header.
-add_executable(ggmlc-info tools/ggmlc_info.c)
-target_link_libraries(ggmlc-info PRIVATE ggmlc_rt)
+# Plain C on purpose: keeps ggml_compiler_rt.h honest as a C header.
+add_executable(ggml-compiler-info tools/ggml_compiler_info.c)
+target_link_libraries(ggml-compiler-info PRIVATE ggml_compiler_rt)
+
+# A wheel (pip / scikit-build-core) carries the library and the headers generated C++ needs: the
+# runtime's and ggml's. Only this component is installed; ggml's own install rules are not.
+if(SKBUILD)
+    install(TARGETS ggml_compiler_rt
+            LIBRARY DESTINATION ggml_compiler/lib COMPONENT wheel
+            RUNTIME DESTINATION ggml_compiler/lib COMPONENT wheel)
+    install(DIRECTORY include/ ${ggml_SOURCE_DIR}/ggml/include/ DESTINATION ggml_compiler/include COMPONENT wheel)
+endif()

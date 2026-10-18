@@ -86,24 +86,25 @@ class TwoPart(nn.Module):
 
 
 def test_two_stage_program_shares_weights_and_values(backend, tmp_path):
-    import ggmlc
+    import ggml_compiler
     from helpers import assert_close
-    from ggmlc.runtime import Session
+    from ggml_compiler.runtime import Session
 
     m = _seeded(TwoPart())
     x, extra = _x(1, 10, 64), {"bias": _x(1, 10)}
     with torch.no_grad():
         feats = m.encode(x, extra)
-    program = ggmlc.Program(
+    program = ggml_compiler.Program(
         root=m,
-        stages={"encode": ggmlc.Stage(m.encode, (x, extra)), "decode": ggmlc.Stage(m.decode, (feats,))},
-        driver=ggmlc.Driver(
+        stages={"encode": ggml_compiler.Stage(m.encode, (x, extra)), "decode": ggml_compiler.Stage(m.decode, (feats,))},
+        driver=ggml_compiler.Driver(
             inputs=["x", "extra"],
-            body=[ggmlc.call("encode", ["x", "extra"], ["feats"]), ggmlc.call("decode", ["feats"], ["y"])],
+            body=[ggml_compiler.call("encode", ["x", "extra"], ["feats"]), ggml_compiler.call("decode", ["feats"],
+                                                                                              ["y"])],
             outputs=["y", "feats"],
         ),
     )
-    art = ggmlc.compile(program, out_dir=tmp_path)
+    art = ggml_compiler.compile(program, out_dir=tmp_path)
     assert {w.fqn for w in art.program.weights.values()} >= {"norm.weight", "head.weight", "enc.fc1.weight"}
     assert art.report.data["weights"]["count"] == 8  # norm stored once though both stages read it
 

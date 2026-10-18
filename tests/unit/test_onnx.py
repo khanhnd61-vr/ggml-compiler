@@ -7,8 +7,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from helpers import TOL, assert_close
 
-import ggmlc
-from ggmlc.runtime import Session
+import ggml_compiler
+from ggml_compiler.runtime import Session
 
 onnx = pytest.importorskip("onnx")
 ort = pytest.importorskip("onnxruntime")
@@ -73,7 +73,7 @@ def test_onnx_matches_onnxruntime(case, backend, tmp_path):
             m.bn.running_var.uniform_(0.5, 2)
     ins = inputs()
     path = _export(m, ins, tmp_path / f"{case}.onnx", names)
-    art = ggmlc.compile(path, dict(zip(names, ins)), tmp_path / "out")
+    art = ggml_compiler.compile(path, dict(zip(names, ins)), tmp_path / "out")
     assert art.report.data["stages"]["forward"]["nodes"] > 0
     with np.load(tmp_path / "out" / "reference_outputs.npz") as z:
         refs = {k: z[k] for k in z.files}  # onnxruntime's outputs
@@ -92,8 +92,8 @@ def test_onnx_missing_ops_are_listed(tmp_path):
             return torch.erf(x) + torch.atan(x)
 
     path = _export(Odd(), (r(3, 4),), tmp_path / "odd.onnx", ["x"])
-    with pytest.raises(ggmlc.CompileError) as e:
-        ggmlc.compile(path, None, tmp_path / "out")
+    with pytest.raises(ggml_compiler.CompileError) as e:
+        ggml_compiler.compile(path, None, tmp_path / "out")
     assert "Erf" in str(e.value) and "Atan" in str(e.value)
 
 
@@ -101,7 +101,7 @@ def test_onnx_dynamic_input_needs_a_shape(tmp_path):
     m = nn.Linear(8, 4)
     dim = torch.export.Dim("batch", min=1, max=64)
     path = _export(m, (r(2, 8),), tmp_path / "dyn.onnx", ["x"], dynamic={"input": {0: dim}})
-    with pytest.raises(ggmlc.CompileError, match="dynamic shape"):
-        ggmlc.compile(path, None, tmp_path / "out")
-    art = ggmlc.compile(path, None, tmp_path / "out2", input_shapes={"x": [5, 8]})
+    with pytest.raises(ggml_compiler.CompileError, match="dynamic shape"):
+        ggml_compiler.compile(path, None, tmp_path / "out")
+    art = ggml_compiler.compile(path, None, tmp_path / "out2", input_shapes={"x": [5, 8]})
     assert art.report.data["inputs"]["x"]["shape"] == [5, 8]

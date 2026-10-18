@@ -10,9 +10,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from helpers import assert_close
 
-import ggmlc
-from ggmlc.options import resolve
-from ggmlc.runtime import Session
+import ggml_compiler
+from ggml_compiler.options import resolve
+from ggml_compiler.runtime import Session
 
 TOL = {"cpu": 1e-5, "cuda": 2e-3}
 
@@ -55,17 +55,17 @@ def block():
 
 def _compile(block, out, **kw):
     m, img = block
-    return ggmlc.compile(m, (img,), out, input_names=["img"], output_names=["y"], **kw)
+    return ggml_compiler.compile(m, (img,), out, input_names=["img"], output_names=["y"], **kw)
 
 
 def _program_json(art) -> str:
     r = gguf.GGUFReader(art.gguf)
-    f = r.fields["ggmlc.program"]
+    f = r.fields["ggml_compiler.program"]
     return bytes(f.parts[f.data[0]]).decode()
 
 
 def test_levels_nest():
-    sets = [resolve(level).on for level in ggmlc.LEVELS]
+    sets = [resolve(level).on for level in ggml_compiler.LEVELS]
     assert sets[0] == frozenset()
     assert all(a <= b for a, b in zip(sets, sets[1:]))
     assert {"flash_attention", "fast_gelu"} <= sets[2] - sets[1]
@@ -83,7 +83,7 @@ def test_levels_nest():
 
 @pytest.fixture(scope="module")
 def arts(block, tmp_path_factory):
-    out = {lv: _compile(block, tmp_path_factory.mktemp(lv), opt=lv) for lv in ggmlc.LEVELS}
+    out = {lv: _compile(block, tmp_path_factory.mktemp(lv), opt=lv) for lv in ggml_compiler.LEVELS}
     out["default"] = _compile(block, tmp_path_factory.mktemp("default"))
     out["exact"] = _compile(block, tmp_path_factory.mktemp("exact"), precision="exact")
     out["fast"] = _compile(block, tmp_path_factory.mktemp("fast"), precision="fast")
@@ -96,14 +96,14 @@ def test_aliases_are_levels(arts):
 
 
 def test_what_each_level_rewrites(arts):
-    ops = {lv: arts[lv].report.data["stages"]["forward"]["ops"] for lv in ggmlc.LEVELS}
+    ops = {lv: arts[lv].report.data["stages"]["forward"]["ops"] for lv in ggml_compiler.LEVELS}
     assert ops["O0"].get("repeat") and "repeat" not in ops["O1"]  # shared_kv_heads
     assert ops["O0"]["mul"] > ops["O1"]["mul"]  # batch norm's scale and x * 1 are gone
     assert "flash_attn" in ops["O2"] and "flash_attn" not in ops["O1"]
     assert "gelu" in ops["O2"] and "gelu" not in ops["O1"]  # fast_gelu; O1 keeps the exact gelu_tanh
 
 
-@pytest.mark.parametrize("level", ggmlc.LEVELS)
+@pytest.mark.parametrize("level", ggml_compiler.LEVELS)
 def test_every_level_is_correct(arts, block, level, backend):
     m, img = block
     with torch.no_grad():
@@ -117,7 +117,7 @@ def test_options_are_recorded(arts):
     meta = arts["O2"].report.data["options"]
     assert meta["level"] == "O2" and meta["flags"]["flash_attention"] and meta["specialized"] == {}
     r = gguf.GGUFReader(arts["O2"].gguf)
-    f = r.fields["ggmlc.options"]
+    f = r.fields["ggml_compiler.options"]
     assert json.loads(bytes(f.parts[f.data[0]]).decode()) == meta
 
 
@@ -135,25 +135,27 @@ class InvariantWork(nn.Module):
 def _loop_program(**kw):
     torch.manual_seed(0)
     m = InvariantWork().eval()
-    return ggmlc.Program(
+    return ggml_compiler.Program(
         root=m,
-        stages={"step": ggmlc.Stage(m.step, (torch.randn(2, 4), torch.ones(1), torch.randn(2, 16)))},
-        driver=ggmlc.Driver(inputs=["ctx", "noise"],
-                            body=[ggmlc.loop(3, carry={"x": "noise"}, scalars={"t": [1, 2, 3]},
-                                             body=[ggmlc.call("step", ["x", "t", "ctx"], ["x"])])],
-                            outputs=["x"]),
+        stages={"step": ggml_compiler.Stage(m.step, (torch.randn(2, 4), torch.ones(1), torch.randn(2, 16)))},
+        driver=ggml_compiler.Driver(
+            inputs=["ctx", "noise"],
+            body=[ggml_compiler.loop(3, carry={"x": "noise"}, scalars={"t": [1, 2, 3]},
+                                     body=[ggml_compiler.call("step", ["x", "t", "ctx"], ["x"])])],
+            outputs=["x"]),
         **kw)
 
 
 def test_flags_override_the_level(tmp_path, backend):
-    art = ggmlc.compile(_loop_program(), out_dir=tmp_path / "a", flags={"hoist_invariants": False})
+    art = ggml_compiler.compile(_loop_program(), out_dir=tmp_path / "a", flags={"hoist_invariants": False})
     assert set(art.report.data["stages"]) == {"step"}
     with Session(art.gguf, backend=backend) as s:
         out = s.run(**dict(np.load(art.out_dir / "example_inputs.npz")))
     assert_close(out, dict(np.load(art.out_dir / "reference_outputs.npz")), TOL[backend])
-    assert set(ggmlc.compile(_loop_program(), out_dir=tmp_path / "b").report.data["stages"]) == {"step", "step.invariant"}
+    stages = ggml_compiler.compile(_loop_program(), out_dir=tmp_path / "b").report.data["stages"]
+    assert set(stages) == {"step", "step.invariant"}
 
 
 def test_specializations_are_recorded(tmp_path):
-    art = ggmlc.compile(_loop_program(specialized={"prompt_length": "12 tokens"}), out_dir=tmp_path)
+    art = ggml_compiler.compile(_loop_program(specialized={"prompt_length": "12 tokens"}), out_dir=tmp_path)
     assert art.report.data["options"]["specialized"] == {"prompt_length": "12 tokens"}

@@ -7,8 +7,8 @@ import pytest
 import torch
 import torch.nn as nn
 
-import ggmlc
-from ggmlc.runtime import Session
+import ggml_compiler
+from ggml_compiler.runtime import Session
 
 mtq = pytest.importorskip("modelopt.torch.quantization")
 
@@ -27,7 +27,7 @@ def _quantized(cfg_name):
 def test_modelopt_import(cfg, stored, weight_err, backend, tmp_path):
     fp32, q, x = _quantized(cfg)
     before = {k: v.clone() for k, v in q.state_dict().items()}
-    art = ggmlc.compile(q, (x,), tmp_path, prequant=ggmlc.ModelOpt())
+    art = ggml_compiler.compile(q, (x,), tmp_path, prequant=ggml_compiler.ModelOpt())
     pre = art.report.data["prequant"]
 
     assert set(pre["weights"]) == {"0.weight", "2.weight", "4.weight"}
@@ -50,8 +50,8 @@ def test_modelopt_import(cfg, stored, weight_err, backend, tmp_path):
 
 def test_modelopt_weights_keep_their_type_over_policy(tmp_path):
     _, q, x = _quantized("INT4_BLOCKWISE_WEIGHT_ONLY_CFG")
-    art = ggmlc.compile(q, (x,), tmp_path, prequant=ggmlc.ModelOpt(int4="q4_1"),
-                        dtype_policy={"rules": [{"match": "*", "dtype": "f16"}]})
+    art = ggml_compiler.compile(q, (x,), tmp_path, prequant=ggml_compiler.ModelOpt(int4="q4_1"),
+                                dtype_policy={"rules": [{"match": "*", "dtype": "f16"}]})
     tensors = art.report.data["weights"]["tensors"]
     assert tensors["2.weight"]["dtype"] == "q4_1"  # imported mapping wins
     assert tensors["2.bias"]["dtype"] == "f32"  # biases: float, as always
@@ -60,7 +60,7 @@ def test_modelopt_weights_keep_their_type_over_policy(tmp_path):
 def test_grid_encoders_round_trip():
     import gguf
 
-    from ggmlc.quant.encode import encode_on_grid
+    from ggml_compiler.quant.encode import encode_on_grid
 
     rng = np.random.default_rng(0)
     for storage, lo, hi, qt in [("q8_0", -127, 127, "Q8_0"), ("q4_0", -8, 7, "Q4_0")]:

@@ -31,7 +31,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from ggmlc.verify.parity import stats_of, token_stats
+from ggml_compiler.verify.parity import stats_of, token_stats
 
 TEST1 = Path(__file__).parents[1] / ".deps" / "llama.cpp-b11223" / "tools" / "mtmd" / "test-1.jpeg"
 SAMPLES = ["astronaut", "coffee", "chelsea", "rocket", "hubble_deep_field", "immunohistochemistry"]
@@ -59,7 +59,8 @@ def reference(snapshot: str, d: Path, out: Path, n_answer: int) -> None:
     if (out / "ref.npy").exists() and not (out / "test-1").exists():  # the single-case layout: test-1
         (out / "test-1").mkdir()
         for f in out.iterdir():
-            if f.is_file() and f.name != "cases.json" and not f.name.startswith(("ggmlc-", "baseline")):
+            results = f.name.startswith(("ggml-compiler-", "ggmlc-", "baseline"))
+            if f.is_file() and f.name != "cases.json" and not results:
                 shutil.move(str(f), out / "test-1" / f.name)
     todo = [c for c in CASES if not (out / c / "ref.npy").exists()]
     if todo:

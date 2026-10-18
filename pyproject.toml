@@ -1,24 +1,48 @@
 [project]
-name = "ggmlc"
-version = "0.1.0"
-description = "Compile PyTorch and ONNX models into ggml programs"
+name = "ggml-compiler"
+dynamic = ["version"]
+description = "Compile PyTorch and ONNX models into ggml programs that run on CPU and CUDA without Python"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
+authors = [{ name = "Khanh Nguyen" }]
 requires-python = ">=3.10"
+keywords = ["ggml", "gguf", "compiler", "pytorch", "onnx", "llm", "vlm", "inference", "robotics"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Compilers",
+]
 dependencies = [
-    "torch==2.11.0",
+    "torch>=2.11",
     "numpy>=1.26",
-    "gguf>=0.17",
+    "gguf>=0.19",
     "pyyaml>=6",
+    "sympy>=1.13",
 ]
 
 [project.optional-dependencies]
+llm = ["transformers>=5.5"]   # ggml_compiler.causal_lm and llama_cpp_policy
 onnx = ["onnx", "onnxruntime", "onnxscript"]
 modelopt = ["nvidia-modelopt"]
 
+[project.urls]
+Homepage = "https://github.com/khanhnd61-vr/ggml-compiler"
+Documentation = "https://github.com/khanhnd61-vr/ggml-compiler/blob/main/docs/USAGE.md"
+Issues = "https://github.com/khanhnd61-vr/ggml-compiler/issues"
+Changelog = "https://github.com/khanhnd61-vr/ggml-compiler/blob/main/CHANGELOG.md"
+
 [project.scripts]
-ggmlc = "ggmlc.cli:main"
+ggml-compiler = "ggml_compiler.cli:main"
 
 [dependency-groups]
 dev = ["pytest>=8"]
@@ -27,11 +51,29 @@ dev = ["pytest>=8"]
 parity = ["lerobot[smolvla,diffusion,pi]; python_version >= '3.12'", "torchvision==0.26.0", "dm-tree>=0.1.8,<1.0.0"]
 
 [build-system]
-requires = ["uv_build>=0.11,<0.12"]
-build-backend = "uv_build"
+requires = ["scikit-build-core>=0.11"]
+build-backend = "scikit_build_core.build"
 
-[tool.uv.build-backend]
-module-root = ""
+[tool.scikit-build]
+minimum-version = "build-system.requires"
+# The wheel carries the runtime library (runtime/, built with CMake) next to the Python package.
+# Python loads it with ctypes, so one wheel per platform serves every Python 3 version.
+cmake.source-dir = "runtime"
+cmake.version = ">=3.22"
+build-dir = "build-wheel/{wheel_tag}"
+build.targets = ["ggml_compiler_rt"]
+install.components = ["wheel"]   # the runtime's own install rules, not ggml's
+wheel.packages = ["ggml_compiler"]
+wheel.py-api = "py3"
+sdist.exclude = ["assets", "bench", ".github"]
+metadata.version.provider = "scikit_build_core.metadata.regex"
+metadata.version.input = "ggml_compiler/__init__.py"
+
+[[tool.scikit-build.overrides]]
+# Development installs (uv sync) stay pure Python: build runtime/ by hand into build/ or
+# build-cuda/, where ggml_compiler.Session looks first in a checkout.
+if.state = "editable"
+wheel.cmake = false
 
 [tool.uv]
 default-groups = ["dev", "parity"]

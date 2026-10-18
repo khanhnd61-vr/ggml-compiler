@@ -1,8 +1,9 @@
-# ggmlc architecture
+# ggml-compiler architecture
 
-ggmlc is a compiler from PyTorch (through `torch.export`) or ONNX to ggml. It owns a small IR whose
-ops sit close to ggml's, and leaves the kernels to ggml. This document describes how a model
-becomes a GGUF, how the runtime executes it, and which ggml behaviours the design works around.
+ggml-compiler is a compiler from PyTorch (through `torch.export`) or ONNX to ggml. It owns a small
+IR whose ops sit close to ggml's, and leaves the kernels to ggml. This document describes how a
+model becomes a GGUF, how the runtime executes it, and which ggml behaviours the design works
+around.
 
 - [Pipeline](#pipeline)
 - [Source layout](#source-layout)
@@ -18,36 +19,21 @@ becomes a GGUF, how the runtime executes it, and which ggml behaviours the desig
 
 ## Pipeline
 
-```
-nn.Module + stage fns + example inputs              model.onnx
-        │ torch.export, per stage                        │ onnx + shape inference
-        ▼                                                ▼
-  frontend/torch_export.py                       frontend/onnx.py
-  (+ frontend/modelopt.py)                               │
-        └───────────────► IR Program ◄───────────────────┘
-                 (shared weight table, stages, driver)
-                               │ passes: lower → simplify → [fuse attention] → fold → hoist
-                               │         → squeeze (≤4-D) → layout (cont) → dce
-                               │ dtype policy
-               ┌───────────────┴────────────────┐
-     emit/gguf_runtime.py                   emit/cpp.py
-     model.gguf (weights + program JSON)    <name>.cpp/.h + CMakeLists.txt
-               │                                │
-               └──► runtime/ libggmlc_rt ◄──────┘  generated code links the same runtime
-                    (C ABI: load, I/O, driver, backends)  for loading, buffers and the driver
-```
+The optional policy YAML feeds the dtype-policy step after compiler passes and before emission.
+It sets `float`, weight-name `rules`, and `fallback` storage types; see
+[SmolVLA's mixed Q4_K/f16 policy](../examples/smolvla/policy-q4k-f16.yaml).
 
-A compile also runs the whole program once in PyTorch (or onnxruntime) on the example inputs and
-saves those inputs and outputs next to the GGUF, so every artifact can be verified later.
+![ggml-compiler compilation pipeline: PyTorch and ONNX frontends converge into a shared IR, compiler passes and dtype policy, then emit GGUF and C++ for the shared runtime and CPU or CUDA backends.](../assets/pipeline.png)
 
 ## Source layout
 
 ```
-ggmlc/
+ggml_compiler/
   api.py       Program, Stage, Driver, call, loop: what the user hands to compile
   llm.py       causal_lm (a Hugging Face LM with a KV cache; per-architecture adapters: SmolVLM and
-               Qwen3-VL add encode + prefill_mm over an image-row buffer), Generator, bench,
-               llama_cpp_policy, qwen3_vl_tables
+               Qwen3-VL add encode + prefill_mm over an image-row buffer, Gemma 4 makes its
+               sliding-window mask in the graph and caches only the layers that own K/V),
+               Generator, bench, llama_cpp_policy, qwen3_vl_tables
   options.py   optimization levels O0-O3 and the flags they set
   compiler.py  compile(), Report, Artifact, the ModelOpt report, C++ emission entry
   ir/          graph.py (TensorType, Value, Param, Weight, Const, Node, Stage), sym.py (symbolic
@@ -62,16 +48,20 @@ ggmlc/
   quant/       types.py (storage types), policy.py (DTypePolicy, legality, fallback),
                encode.py (exact grid encoders for ModelOpt weights)
   emit/        gguf_runtime.py (program JSON, weight encoding, GGUF writer), cpp.py
-  runtime/     session.py (ctypes bindings: Session, quantize, has_backend)
+  runtime/     session.py (ctypes bindings: Session, quantize, has_backend; finds the library)
   verify/      parity.py (the parity metric)
   cli.py
 runtime/
-  include/     ggmlc_rt.h (C API, builder hooks), ggmlc_ops.h (multi-call op expansions shared
-               by the runtime and generated C++)
+  include/     ggml_compiler_rt.h (C API, builder hooks), ggml_compiler_ops.h (multi-call op
+               expansions shared by the runtime and generated C++)
   src/         program.cpp (JSON -> specs), ops.cpp (IR op -> ggml, with pre-checks),
-               ggmlc_rt.cpp (loading, value buffers, call sites, driver, profiler, C API)
-  tools/       ggmlc_info.c (plain C, keeps the header C-clean)
-  CMakeLists.txt               fetches llama.cpp b11223 and builds its ggml only
+               ggml_compiler_rt.cpp (loading, value buffers, call sites, driver, profiler, C API)
+  tools/       ggml_compiler_info.c (plain C, keeps the header C-clean)
+  CMakeLists.txt               fetches llama.cpp b11223 and builds its ggml only; installs the
+                               library and headers into a wheel
+pyproject.toml   the package; scikit-build-core builds runtime/ into each wheel
+tests/           unit/, e2e/, wheel_smoke.py (an installed wheel, outside the source tree)
+.github/workflows/release.yml    sdist, the Linux wheel and its smoke test, PyPI on a v* tag
 ```
 
 ## The IR
@@ -97,12 +87,12 @@ shapes and evaluates them before calling the references.
 
 Ops come in two tiers:
 
-- **Tier 1** maps to one ggml call or a fixed expansion of a few (`ggmlc_ops.h`): `add`, `sub`,
-  `mul`, `div`, the unary ops (`relu`, `gelu`, `gelu_erf`, `gelu_tanh`, `silu`, `tanh`,
+- **Tier 1** maps to one ggml call or a fixed expansion of a few (`ggml_compiler_ops.h`): `add`,
+  `sub`, `mul`, `div`, the unary ops (`relu`, `gelu`, `gelu_erf`, `gelu_tanh`, `silu`, `tanh`,
   `sigmoid`, `exp`, `log`, `sqrt`, `sin`, `cos`, `softplus`, ...), `scale`, `clamp`, `step`,
   `cumsum`, `mean`, `sum_rows`, `norm`, `rms_norm`, `soft_max`, `mul_mat`, `reshape`, `permute`,
-  `repeat`, `concat`, `view`, `cont`, `cast`, `get_rows`, `argmax`, `im2col`, `conv_2d`,
-  `pool_2d`, `flash_attn`.
+  `repeat`, `concat`, `view`, `cont`, `cast`, `get_rows`, `argmax`, `im2col`, `conv_2d`, `pool_2d`,
+  `flash_attn`.
 - **Tier 2** holds source-level ops the passes still want to recognise (`linear`, `layer_norm`,
   `sdpa`); `lower_tier2` rewrites them into tier 1. Emitters accept tier 1 only.
 
@@ -167,9 +157,9 @@ Activation quantizers are dropped and reported.
 
 ## Passes
 
-The optimization level (`ggmlc/options.py`) resolves to a set of flags; each optional rewrite
-below names the flag that enables it. Everything else always runs: at `O0` the pipeline still
-lowers, composes views, turns size-1 permutes into reshapes, folds views of weights above 4-D,
+The optimization level (`ggml_compiler/options.py`) resolves to a set of flags; each optional
+rewrite below names the flag that enables it. Everything else always runs: at `O0` the pipeline
+still lowers, composes views, turns size-1 permutes into reshapes, folds views of weights above 4-D,
 squeezes and lays out, because ggml refuses the graph otherwise.
 
 The pipeline, per stage unless noted:
@@ -187,13 +177,17 @@ The pipeline, per stage unless noted:
 3. **fuse_rope** (`fuse_rope`): `x * cos + rotate_half(x) * sin`, with cos and sin built from the
    outer product of an i32 positions value and a constant inverse-frequency vector, becomes ggml's
    NEOX `rope` on x with heads and tokens swapped (ggml wants the token dim third from the
-   inside). The base is recovered from the frequencies; frequencies that are not a plain
-   `base^(-2i/D)` become `freq_factors`; a scale on cos and sin becomes `attn_factor`.
-4. **fuse_attention** (`flash_attention`): match eager attention (`matmul → scale →
-   [mask | where] → softmax → matmul`) and rewrite it into `flash_attn` for head sizes every
-   backend supports. Masks are cast to f16 (clamped to ±65504 first), and query rows that are
-   fully masked get zeroed queries so their output matches PyTorch's uniform softmax, unless
-   `assume_attended_rows` says no row is.
+   inside); x already laid out `[.., S, H, D]` (Gemma 4 rotates before moving the heads out)
+   needs no swap, and the cos table's broadcast shape tells the two apart. The base is recovered
+   from the non-zero frequencies; frequencies that are not a plain `base^(-2i/D)` become
+   `freq_factors`, a zero one (a partially rotated head) an infinite factor, which makes its angle
+   exactly 0; a scale on cos and sin becomes `attn_factor`.
+4. **fuse_attention** (`flash_attention`): match eager attention (`matmul → scale → [mask | where] →
+   softmax → matmul`) and rewrite it into `flash_attn` for head sizes every backend supports, and
+   512, which the runtime builds as matmul, softmax, matmul at load where the backend cannot run it.
+   Masks are cast to f16 (clamped to ±65504 first), and query rows that are fully masked get zeroed
+   queries so their output matches PyTorch's uniform softmax, unless `assume_attended_rows` says no
+   row is.
 5. **cse** (`cse`): nodes with the same op, inputs and attributes merge; the mask casts and guards
    every layer rebuilds from one input are computed once.
 6. **fold** (whole program): `fold_batch_norm`: fold per-channel affines after a convolution
@@ -203,18 +197,21 @@ The pipeline, per stage unless noted:
 7. **hoist** (whole program, `hoist_invariants`): loop-invariant code motion across the driver. Work in a loop body
    that depends only on values the loop never writes moves into a `<stage>.invariant` stage
    called once before the loop; its results become driver values the trimmed stage reads.
+   Nothing sized by a symbol the loop rebinds (`bind`: a generation loop's KV length) moves, even
+   when its inputs are constant: an `arange(n_kv)` hoisted out of the loop would keep the length
+   it had before the loop.
 8. **f16_kv_cache** (whole program, `f16_kv_cache`): an f32 state whose every read is a cast to f16
    or a matmul operand (a KV cache under flash attention) is retyped to f16, and the casts go.
 9. **dce**, then **squeeze**: values above 4-D get a stand-in holding their non-unit dims, and
    the ops touching them (reshape, permute, view, repeat, concat, elementwise and row ops) are
    rewritten against it. Stage parameters above 4-D take their squeezed type; their driver values
    use the same layout.
-10. **layout**: ggml ops need contiguous inputs, except `permute`, `view`, `cont` and `cast`.
-    Insert one `cont` per strided value that any other op reads. A view is still contiguous when
-    it only moves or slices around size-1 dims, and gets no copy. With `strided_rows`, a strided
-    view whose innermost non-unit dim keeps unit stride also feeds `mul_mat`, `flash_attn`, `rope`
-    and `set_rows` (which take any strides above dim 0) and reshapes that only add or drop size-1
-    dims (`ggmlc::ops::reshape` makes those a strided view) without a copy. Anything still above
+10. **layout**: ggml ops need contiguous inputs, except `permute`, `view`, `cont` and `cast`. Insert
+    one `cont` per strided value that any other op reads. A view is still contiguous when it only
+    moves or slices around size-1 dims, and gets no copy. With `strided_rows`, a strided view whose
+    innermost non-unit dim keeps unit stride also feeds `mul_mat`, `flash_attn`, `rope` and
+    `set_rows` (which take any strides above dim 0) and reshapes that only add or drop size-1 dims
+    (`ggml_compiler::ops::reshape` makes those a strided view) without a copy. Anything still above
     4-D fails here, naming the node.
 11. **dce**.
 ## Weight storage and the dtype policy
@@ -229,11 +226,11 @@ tried. The report records each weight's decision and its relative error.
 
 ## The GGUF artifact
 
-- Metadata: `general.architecture = "ggmlc"`, `ggmlc.format_version`, `ggmlc.program` (the
-  program as JSON), `ggmlc.tensor_names` (GGUF tensor name → parameter name), `ggmlc.source`
-  (frontend, versions), `ggmlc.options` (the level, every flag, and the program's recorded
-  specializations; the runtime does not read it), `ggmlc.meta` (the program's own metadata,
-  returned by `ggmlc_metadata`).
+- Metadata: `general.architecture = "ggml_compiler"`, `ggml_compiler.format_version`,
+  `ggml_compiler.program` (the program as JSON), `ggml_compiler.tensor_names` (GGUF tensor name →
+  parameter name), `ggml_compiler.source` (frontend, versions), `ggml_compiler.options` (the level,
+  every flag, and the program's recorded specializations; the runtime does not read it),
+  `ggml_compiler.meta` (the program's own metadata, returned by `ggml_compiler_metadata`).
 - Tensors are named `w.<n>` for weights and `c.<n>` for constants: GGUF rejects names of 64 bytes
   or more, which module paths often exceed. Constants with the same content are stored once.
 - The program JSON is already in ggml terms: per stage, its parameters (`a.<i>`), its nodes in
@@ -250,7 +247,7 @@ tried. The report records each weight's decision and its relative error.
 
 ## The runtime
 
-`libggmlc_rt` is a C ABI over C++17, linking ggml statically.
+`libggml_compiler_rt` is a C ABI over C++17, linking ggml statically.
 
 - **Load**: parse the program, pick the backend (`cpu`, `cuda`, `auto`), upload weights and
   constants into one backend buffer, allocate every driver value in a second persistent buffer
@@ -266,11 +263,11 @@ tried. The report records each weight's decision and its relative error.
   with `ggml_cpy` nodes appended after all other nodes, so a call can read and write the same
   value (a loop carry). Nothing returns to the host between stages.
 - **Entry points and state**: each entry has its own inputs, outputs and driver;
-  `ggmlc_run_entry` runs one, after checking its inputs were set. Values are global across
-  entries. State values are ordinary driver values that no entry takes or returns, so they
-  persist; `ggmlc_reset` zeroes them. A stage result whose memory already is its destination's (a
-  `ggml_set_rows` into the state the stage read returns a view of it) gets no final copy, so a
-  KV cache update writes only its new rows.
+  `ggml_compiler_run_entry` runs one, after checking its inputs were set. Values are global across
+  entries. State values are ordinary driver values that no entry takes or returns, so they persist;
+  `ggml_compiler_reset` zeroes them. A stage result whose memory already is its destination's (a
+  `ggml_set_rows` into the state the stage read returns a view of it) gets no final copy, so a KV
+  cache update writes only its new rows.
 - **Driver**: `call` runs one call site's graph. `loop` copies each carry's initial value and reads
   each counter's start (4 bytes), then per iteration uploads that iteration's scalars, copies row
   i of each slice source into its loop value (device to device, through views made at load), sets
@@ -278,31 +275,52 @@ tried. The report records each weight's decision and its relative error.
   rebinds if a symbol changed, fills the causal mask rows, runs the body, copies collected values
   into row i of their destinations, and stops if an `until` value (read back, 4 bytes) is one of
   its ids. The trip count may be a symbol.
-- **Symbols**: the specs keep each symbolic dim's expression, and `ProgramSpec::bind` writes
-  their values for one binding into the plain `ne` / parameter fields, which is all graph building
-  reads. A driver value of symbolic size gets a buffer for its largest size (over the corners of
-  its symbols' ranges) and, per binding, a view with that binding's shape. The binding starts
-  with every symbol at its max, and the graphs are first built for it: that is the reservation.
-  `ggmlc_set_symbol` / `ggmlc_set_input_shape` change the binding (the latter solves the symbols an
-  input's shape fixes, by search over each symbol's range); the next run then rebuilds the views
-  and marks every call site with symbolic shapes stale; a stale site rebuilds its graph (reusing
-  its gallocr buffer) when its entry next runs it, so an entry never rebuilds another's stages.
+- **Symbols**: the specs keep each symbolic dim's expression, and `ProgramSpec::bind` writes their
+  values for one binding into the plain `ne` / parameter fields, which is all graph building reads.
+  A driver value of symbolic size gets a buffer for its largest size (over the corners of its
+  symbols' ranges) and, per binding, a view with that binding's shape. The binding starts with every
+  symbol at its max, and the graphs are first built for it: that is the reservation.
+  `ggml_compiler_set_symbol` / `ggml_compiler_set_input_shape` change the binding (the latter solves
+  the symbols an input's shape fixes, by search over each symbol's range); the next run then
+  rebuilds the views and marks every call site with symbolic shapes stale; a stale site rebuilds its
+  graph (reusing its gallocr buffer) when its entry next runs it, so an entry never rebuilds
+  another's stages.
 - **Build options**: like llama.cpp's own CMake, the runtime builds ggml with tinyBLAS
   (`GGML_LLAMAFILE`) and CUDA graphs (`GGML_CUDA_GRAPHS`); ggml's standalone defaults leave both
   off, which halves CPU bf16 matmul throughput and launches every CUDA kernel separately.
-- **Profiling**: with `GGMLC_PROFILE` set, every node runs as its own graph with a sync, and its
-  time is logged with its op and source location; `ggmlc bench --profile` aggregates that.
+- **Profiling**: with `GGML_COMPILER_PROFILE` set, every node runs as its own graph with a sync, and
+  its time is logged with its op and source location; `ggml-compiler bench --profile` aggregates
+  that.
 
 ## Generated C++
 
-`emit/cpp.py` writes one builder function per stage that makes the same ggml calls in the same
-order as the runtime's interpreter of the program JSON. Expansions of several calls live in
-`ggmlc_ops.h`, which both sides use. The generated library registers its builders with
-`ggmlc_load_with` and reuses the runtime for loading, buffers and the driver. Because ggml is
-deterministic for a given graph, the outputs are bit-identical to the runtime's on the same
+`emit/cpp.py` writes one builder function per stage that makes the same ggml calls in the same order
+as the runtime's interpreter of the program JSON. Expansions of several calls live in
+`ggml_compiler_ops.h`, which both sides use. The generated library registers its builders with
+`ggml_compiler_load_with` and reuses the runtime for loading, buffers and the driver. Because ggml
+is deterministic for a given graph, the outputs are bit-identical to the runtime's on the same
 backend and thread count; the generated `<name>-check` binary verifies that. Symbolic dims become
-C++ expressions over `const int64_t` locals read with `ggmlc_build_symbol`, and the check binary
-binds the example's symbols before reading `example_inputs.bin`.
+C++ expressions over `const int64_t` locals read with `ggml_compiler_build_symbol`, and the check
+binary binds the example's symbols before reading `example_inputs.bin`. From a source checkout the
+generated CMake project builds the checkout's `runtime/` (or links a prebuilt library); from an
+installed wheel it links the runtime library and headers installed with the package.
+
+## Packaging
+
+A wheel is the Python package plus the runtime: scikit-build-core builds `runtime/` with CMake and
+installs `libggml_compiler_rt` into `ggml_compiler/lib/`, and the runtime's and ggml's headers
+into `ggml_compiler/include/` for generated C++. Only that install component goes in, not ggml's
+own install rules. Python loads the library with ctypes rather than as an extension module, so the
+wheel is `py3-none-<platform>`: one per platform for every Python 3. The published Linux wheel is
+built with `GGML_NATIVE=OFF`, ggml's portable x86-64 baseline (AVX2, FMA, F16C); a source build
+(`pip install --no-binary`, or CMake in a checkout) targets the build machine's CPU and can enable
+CUDA.
+
+`ggml_compiler.runtime.library_path()` takes `$GGML_COMPILER_RT` first, then a source checkout's
+`build-cuda/` and `build/`, then the wheel's `lib/`. Editable installs (`uv sync`) skip CMake
+(`wheel.cmake = false` for that state), so development keeps building `runtime/` by hand. The
+version is written once, in `ggml_compiler/__init__.py`: the package metadata and the runtime's
+CMake both read it there.
 
 ## ggml constraints the design works around
 
@@ -322,10 +340,15 @@ binds the example's symbols before reading `example_inputs.bin`.
 - CUDA's f32 `mul_mat` runs through TF32 (~1e-4 relative per matmul), and 16-bit weights make
   cuBLAS accumulate in f16 unless the op asks for f32 (`ggml_prec_set_acc`). CPU parity is 1e-4;
   CUDA's is 1e-2. A mul_mat node with `acc` set (`Stage(matmul_acc="f32")`) asks for f32; flash
-  attention always does, as llama.cpp's graphs do.
+  attention always does, as llama.cpp's graphs do, and so do both matmuls of attention left unfused
+  (over an f16 KV cache, cuBLAS would otherwise sum Q·Kᵀ and P·V in f16).
 - `ggml_flash_attn_ext` wants f16 K/V and takes head sizes {40, 64, 72, 80, 96, 112, 128, 256} on
-  CUDA. Its mask is f16, so masks are clamped to ±65504 (f32 min would become -inf, and a fully
-  masked row NaN).
+  every CUDA GPU, 512 only on Turing or newer with grouped-query heads, a mask and a KV length that
+  is a multiple of 256. A compiled program does not know its GPU, so
+  `ggml_compiler::ops::flash_attn` asks the backend (`ggml_backend_supports_op`; generated C++
+  through `ggml_compiler_build_supports`) and builds the same attention as matmul, softmax, matmul
+  where it cannot. Its mask is f16, so masks are clamped to ±65504 (f32 min would become -inf, and a
+  fully masked row NaN).
 - `ggml_conv_2d` builds its patch buffer in f16 unless the kernel is bf16, hence the runtime's own
   im2col + matmul. `ggml_conv_transpose_1d` has no padding or batch and is a slow direct loop:
   transposed 1-D convolutions lower to a matmul with the permuted kernel plus an overlap-add of
@@ -338,6 +361,10 @@ binds the example's symbols before reading `example_inputs.bin`.
 - `ggml_set_rows(dst, rows, idx)` returns a view of `dst` and writes in place along ne1; I32
   indices work. A KV cache is `[kv_heads, max_context, head_dim]` per layer (rows = positions),
   written with `index_copy` along dim 1, and read through a view of its first `n_kv` rows.
+  Only layers that compute K/V get one, each at its own size (the adapter's `kv_layout`): Gemma
+  4's last layers reuse earlier layers' K/V, and its full-attention layers have a larger head.
+  Gemma 4's sliding-window layers add `-inf` to the caller's causal mask where `position - j >=
+  sliding_window`, computed in the graph from the positions input, so callers pass one mask.
   A VLM's image rows are state the same way: `encode` writes `tiles * rows_per_tile` of them at
   `arange(n)` (a symbolic stop, ggml_arange in f32 cast to I32), and `prefill_mm` takes its input
   embeddings with one `get_rows` from `concat(image rows, embed(tokens))`. Qwen3-VL's stages call

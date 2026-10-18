@@ -1,4 +1,4 @@
-"""LeRobot GR00T N1.7 (nvidia/GR00T-N1.7-LIBERO, libero_object, embodiment libero_sim) as ggmlc
+"""LeRobot GR00T N1.7 (nvidia/GR00T-N1.7-LIBERO, libero_object, embodiment libero_sim) as ggml-compiler
 backbone + encode + step x4.
 
 The stage functions reproduce LeRobot's GR00TN17.get_action bit for bit. Parity runs on the real
@@ -15,8 +15,8 @@ import pytest
 import torch
 from helpers import assert_close, load_example, scratch_dir
 
-import ggmlc
-from ggmlc.runtime import Session
+import ggml_compiler
+from ggml_compiler.runtime import Session
 
 pytestmark = pytest.mark.slow
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
@@ -34,7 +34,7 @@ def shallow(tmp_path_factory):
     with scratch_dir(tmp_path_factory, "groot") as out:  # ~4 GB
         try:
             model = gr.load(n_layers={"llm": 4, "dit": 4, "vl_self_attention": 1})
-            art = ggmlc.compile(gr.program_from_model(model), out_dir=out)
+            art = ggml_compiler.compile(gr.program_from_model(model), out_dir=out)
         except OSError as e:  # the Cosmos-Reason2 processor files are gated on the Hub
             pytest.skip(f"GR00T processor not available: {e}")
         yield model, art
