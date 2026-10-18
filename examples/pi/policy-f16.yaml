@@ -1,0 +1,9 @@
+# Every GEMM weight and the token embedding resident as f16. As fast as bf16 on CPU (tinyBLAS) and on
+# CUDA, and more accurate: ggml converts the activations to the weight type, and f16 keeps 10
+# mantissa bits to bf16's 7. A bf16 checkpoint's values fit f16 except for very small ones.
+float: f32
+rules:
+  - match: "**.weight"
+    dtype: f16
+  - match: "**.weight:*"
+    dtype: f16

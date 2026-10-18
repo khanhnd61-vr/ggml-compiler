@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+*.egg-info/
+
+# Builds and fetched sources
+build*/
+.deps/
+
+# Compiler outputs
+out/
+*.log
+
+# Local notes and agent settings, not part of the project
+.claude/
+CLAUDE.md

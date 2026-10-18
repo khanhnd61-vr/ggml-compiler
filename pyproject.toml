@@ -1,0 +1,57 @@
+[project]
+name = "ggmlc"
+version = "0.1.0"
+description = "Compile PyTorch and ONNX models into ggml programs"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+dependencies = [
+    "torch==2.11.0",
+    "numpy>=1.26",
+    "gguf>=0.17",
+    "pyyaml>=6",
+]
+
+[project.optional-dependencies]
+onnx = ["onnx", "onnxruntime", "onnxscript"]
+modelopt = ["nvidia-modelopt"]
+
+[project.scripts]
+ggmlc = "ggmlc.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+# PyTorch references for the end-to-end parity tests (ACT, SmolVLA): the LeRobot 0.6.2 fork
+# that vla.cpp's parity checks used. Not on PyPI. `uv sync --group parity`.
+parity = ["lerobot[smolvla,diffusion,pi]; python_version >= '3.12'", "torchvision==0.26.0", "dm-tree>=0.1.8,<1.0.0"]
+
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-root = ""
+
+[tool.uv]
+default-groups = ["dev", "parity"]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }
+lerobot = { url = "https://github.com/khanhnd61-vr/lerobot/archive/f281f8f762f19a9b34467aeea3b6649c9f16c8d2.tar.gz" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tests"]
+# End-to-end artifacts are GBs (SmolVLA in f32 is 1.6 GB): keep tmp dirs only for failures.
+tmp_path_retention_policy = "failed"
+markers = [
+    "slow: end-to-end model tests",
+    "cuda: needs a CUDA device and a runtime built with -DGGML_CUDA=ON",
+]

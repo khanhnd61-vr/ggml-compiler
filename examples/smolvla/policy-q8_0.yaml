@@ -1,0 +1,7 @@
+# Every matmul weight and the token embedding table in Q8_0.
+float: f32
+rules:
+  - match: "**.weight"
+    dtype: q8_0
+  - match: "**.weight:*"
+    dtype: q8_0

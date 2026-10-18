@@ -1,0 +1,13 @@
+# Mixed: vision tower in f16, VLM text model and action expert in Q4_K (Q8_0 where a row is not a
+# multiple of 256), everything else f32.
+float: f32
+fallback: [q8_0, f16]
+rules:
+  - match: "vlm_with_expert.vlm.model.vision_model.**"
+    dtype: f16
+  - match: "vlm_with_expert.vlm.model.connector.**"
+    dtype: f16
+  - match: "vlm_with_expert.vlm.model.text_model.**"
+    dtype: q4_k
+  - match: "vlm_with_expert.lm_expert.**"
+    dtype: q4_k

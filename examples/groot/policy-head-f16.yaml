@@ -1,0 +1,11 @@
+# GR00T N1.7's Qwen3-VL backbone is the precision-sensitive part (activations up to ~1.5e4 in the
+# residual stream): keep it f32 and store the 1.6B-parameter action head in f16. Against the fp32
+# reference: 5.8e-3 (CUDA) / 2.9e-3 (CPU), vs 1.1e-2 / 3.2e-2 with f16 everywhere. 9 GB, fits 12 GB.
+float: f32
+rules:
+  - match: "backbone.**"
+    dtype: f32
+  - match: "**.weight"
+    dtype: f16
+  - match: "**.weight:*"
+    dtype: f16

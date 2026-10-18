@@ -1,0 +1,7 @@
+# Every GEMM weight resident as f16 (vla.cpp --weight-dtype f16).
+float: f32
+rules:
+  - match: "**.weight"
+    dtype: f16
+  - match: "**.weight:*"
+    dtype: f16

@@ -1,0 +1,8 @@
+# Every GEMM weight and the token embedding resident as bf16: the checkpoint's own values, so
+# storage is lossless (vla.cpp's default for this bf16 checkpoint). Norm scales and biases stay f32.
+float: f32
+rules:
+  - match: "**.weight"
+    dtype: bf16
+  - match: "**.weight:*"
+    dtype: bf16

@@ -1,0 +1,6 @@
+# Matches vla.cpp's CUDA default for ACT: f16 convolution kernels (direct implicit-GEMM
+# convolution on tensor cores), f32 everything else. ACTInfer holds the model as `act`.
+float: f32
+rules:
+  - match: "act.backbone.**"
+    dtype: f16

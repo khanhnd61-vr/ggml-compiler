@@ -1,0 +1,8 @@
+# Diffusion Policy with f16 weights: the U-Net (95% of the weights) and the ResNet encoder.
+# The program's root is the DiffusionModel, so weight names start at `unet.` / `rgb_encoder.`.
+float: f32
+rules:
+  - match: "unet.**"
+    dtype: f16
+  - match: "rgb_encoder.**"
+    dtype: f16

@@ -1,0 +1,7 @@
+# Matches vla.cpp's CPU default: every GEMM weight resident as bf16.
+float: f32
+rules:
+  - match: "**.weight"
+    dtype: bf16
+  - match: "**.weight:*"
+    dtype: bf16

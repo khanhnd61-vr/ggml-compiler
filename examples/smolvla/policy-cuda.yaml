@@ -1,0 +1,7 @@
+# Matches vla.cpp's CUDA defaults: vision tower f16, VLM text model and action expert f32.
+float: f32
+rules:
+  - match: "vlm_with_expert.vlm.model.vision_model.**"
+    dtype: f16
+  - match: "vlm_with_expert.vlm.model.connector.**"
+    dtype: f16
