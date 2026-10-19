@@ -119,15 +119,15 @@ Verify against the PyTorch outputs saved at compile time:
 uv run ggml-compiler verify out/encoder/model.gguf --backend cpu
 ```
 
-Language models with a KV cache (`ggml_compiler.causal_lm`), sizes set at run time, multi-stage
-models with loops, optimization levels, weight dtypes and quantization, ModelOpt and ONNX models,
-and the C API are in
-[docs/USAGE.md](https://github.com/khanhnd61-vr/ggml-compiler/blob/main/docs/USAGE.md).
-[docs/ARCHITECTURE.md](https://github.com/khanhnd61-vr/ggml-compiler/blob/main/docs/ARCHITECTURE.md)
-explains how the compiler and runtime work.
-[docs/MODELS.md](https://github.com/khanhnd61-vr/ggml-compiler/blob/main/docs/MODELS.md) lists the
-models ggml-compiler is tested on, with their accuracy and speed against PyTorch, llama.cpp and
-vla.cpp.
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [docs/OPS.md](https://github.com/khanhnd61-vr/ggml-compiler/blob/main/docs/OPS.md) | List of supported and un-supported Pytorch/ONNX operations. |
+| [docs/MODELS.md](https://github.com/khanhnd61-vr/ggml-compiler/blob/main/docs/MODELS.md) | List of tested models with their accuracy and speed against their references. |
+| [docs/ARCHITECTURE.md](https://github.com/khanhnd61-vr/ggml-compiler/blob/main/docs/ARCHITECTURE.md) | How it works: the IR, frontends, passes, GGUF format and runtime internals. |
+| [docs/USAGE.md](https://github.com/khanhnd61-vr/ggml-compiler/blob/main/docs/USAGE.md) | API, CLI, codegen, quantization and other advance optimizations. |
+| [docs/EXPORT.md](https://github.com/khanhnd61-vr/ggml-compiler/blob/main/docs/EXPORT.md) | How to write export script to compile a Pytorch model to ggml C++ source. |
 
 ## License
 

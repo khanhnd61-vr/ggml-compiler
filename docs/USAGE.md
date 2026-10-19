@@ -635,8 +635,9 @@ ggml-compiler verify  MODEL.gguf [--inputs in.npz --ref ref.npz] [--backend B] [
 
 ## When an op has no ggml lowering
 
-ggml-compiler first decomposes the op into ggml primitives. If that is impossible, compilation
-stops, listing every missing op once with its source line. It never inserts a silent slow path:
+[OPS.md](OPS.md) lists what compiles and what does not, with workarounds. ggml-compiler first
+decomposes the op into ggml primitives. If that is impossible, compilation stops, listing every
+missing op once with its source line. It never inserts a silent slow path:
 
 ```
 ggml-compiler: error: stage 'forward': 2 op(s) have no ggml lowering
