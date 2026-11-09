@@ -125,6 +125,16 @@ CMake source download; Python packages and model checkpoints must be available s
 `GGML_COMPILER_LLAMA_TAG` can override the pin for development, but a different ggml
 version needs compatibility testing.
 
+### Linking an application's own ggml
+
+An application that already builds ggml (vla.cpp) adds `runtime/` as a subdirectory with
+`-DGGML_COMPILER_EXTERNAL_GGML=ON`, so the runtime links that `ggml` target instead of
+fetching and linking its own, and one process holds one ggml. The application names the
+llama.cpp checkout its ggml came from (`GGML_COMPILER_GGML_SOURCE_DIR`, for ggml's headers
+and `vendor/nlohmann`) and its tag (`GGML_COMPILER_EXTERNAL_GGML_TAG`), which must be the
+pinned `b11223` unless `GGML_COMPILER_ALLOW_GGML_MISMATCH=ON`. `GGML_COMPILER_BUILD_TOOLS=OFF`
+skips `ggml-compiler-info`. See [SERVING.md](SERVING.md#building-the-runtime-inside-a-host).
+
 ## Selecting the runtime library
 
 Python sessions and the CLI search in this order:

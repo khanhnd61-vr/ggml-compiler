@@ -118,7 +118,9 @@ give a range where one is needed.
 Record what you fixed at compile time in `Program(specialized={...})`. Record what the caller
 needs at run time (task names in index order, units, the image format) in
 `Program(metadata={...})`. Metadata is stored in the GGUF and read back with `Session.metadata`
-or `ggml_compiler_metadata`.
+or `ggml_compiler_metadata`. A robot policy records its preprocessing as a `vla` serving manifest
+(`ggml_compiler.vla`, [SERVING.md](SERVING.md)), which a host such as vla.cpp's `vla-server` reads
+to run the program with no model-specific code.
 
 ### 3. Split the model into stages
 
@@ -418,5 +420,5 @@ def check_stages(checkpoint: str = CHECKPOINT, seed: int = 0) -> None:
 - [ ] `specialized` lists everything fixed at compile time, and `metadata` holds what the caller
       needs.
 - [ ] The I/O contract is written down: names, shapes, dtypes, units and the caller's
-      preprocessing.
+      preprocessing; for a policy, as a `vla` manifest in the metadata.
 - [ ] The upstream code is unmodified, and every deviation in the stages has a comment.

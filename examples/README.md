@@ -14,6 +14,7 @@ the same compiled computation for the runtime.
 | [`pi`](pi/) | [π0](https://huggingface.co/lerobot/pi0_libero_finetuned_v044) or π0.5 | PaliGemma prefix followed by 10 flow-matching steps |
 | [`groot`](groot/) | GR00T N1.7 | Qwen3-VL backbone, state/VL encoder, and 4 DiT flow-matching steps |
 | [`diffusion`](diffusion/) | [Diffusion Policy](https://huggingface.co/lerobot/diffusion_pusht) | Observation encoder, DDPM/DDIM loop, and action selection |
+| [`corp`](corp/) | [CoRP](https://github.com/corp-policy/CoRP) (LIBERO release, from a checkout at `CORP_ROOT`) | DINOv2 and T5 encoders, resampler, and 10 Euler steps of a DiT in one stage, with a `vla` manifest ([docs/VLA_CPP.md](../docs/VLA_CPP.md)) |
 
 Each `export.py` exposes a zero-argument `program()` function for the CLI. The LeRobot examples
 load a pretrained checkpoint, create deterministic example inputs, and preserve preprocessing and

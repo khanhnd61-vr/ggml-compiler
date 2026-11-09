@@ -48,6 +48,8 @@ See [Installation options](docs/INSTALLATION.md) for custom builds, optional dep
 | [docs/USAGE.md](https://github.com/khanhnd61-vr/ggml-compiler/blob/main/docs/USAGE.md) | API, CLI, codegen, quantization and other advance optimizations. |
 | [docs/MODELS.md](https://github.com/khanhnd61-vr/ggml-compiler/blob/main/docs/MODELS.md) | List of tested models with their accuracy and speed against their references. |
 | [docs/EXPORT.md](https://github.com/khanhnd61-vr/ggml-compiler/blob/main/docs/EXPORT.md) | How to write export script to compile a Pytorch model to ggml C++ source. |
+| [docs/SERVING.md](https://github.com/khanhnd61-vr/ggml-compiler/blob/main/docs/SERVING.md) | Serving a compiled policy from a host such as vla.cpp: the `vla` manifest and building the runtime against the host's ggml. |
+| [docs/VLA_CPP.md](https://github.com/khanhnd61-vr/ggml-compiler/blob/main/docs/VLA_CPP.md) | Running a new model with vla.cpp, end to end, on CoRP: export script, manifest, compile, verify, serve, and what the client does. |
 | [docs/ARCHITECTURE.md](https://github.com/khanhnd61-vr/ggml-compiler/blob/main/docs/ARCHITECTURE.md) | How it works: the IR, frontends, passes, GGUF format and runtime internals. |
 | [docs/OPS.md](https://github.com/khanhnd61-vr/ggml-compiler/blob/main/docs/OPS.md) | List of supported and un-supported Pytorch/ONNX operations. |
 

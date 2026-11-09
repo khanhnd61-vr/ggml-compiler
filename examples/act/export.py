@@ -1,14 +1,19 @@
 """LeRobot ACT as a ggml-compiler program: `ggml-compiler compile examples/act/export.py:program --out out/act`.
 
 The compiled program maps normalized state and camera tensors to the normalized action chunk,
-exactly like `ACTPolicy.model`. Normalization stays with the caller (LeRobot's processors).
+exactly like `ACTPolicy.model`. Normalization stays with the caller (LeRobot's processors); the
+checkpoint's statistics travel in the GGUF as a `vla` serving manifest (docs/SERVING.md), so a host
+such as vla.cpp's vla-server applies them without model-specific code.
 """
 
+import json
 import os
+from pathlib import Path
 
 import torch
 
 import ggml_compiler
+from ggml_compiler import vla
 
 CHECKPOINT = os.environ.get("ACT_CHECKPOINT", "khanhnd61/act_so101-multi-task-clean")
 
@@ -51,8 +56,63 @@ def example_inputs(config, image_size: tuple[int, int] | None = None) -> tuple[t
     return (state, *images)
 
 
+def checkpoint_dir(checkpoint: str = CHECKPOINT) -> Path:
+    """The local directory of a checkpoint: as given, or the Hub snapshot."""
+    if Path(checkpoint).is_dir():
+        return Path(checkpoint)
+    from huggingface_hub import snapshot_download
+
+    return Path(snapshot_download(checkpoint))
+
+
+def normalizer_stats(checkpoint: str = CHECKPOINT) -> dict[str, dict[str, list[float]]]:
+    """Feature name -> {"mean": [...], "std": [...]} from the checkpoint's LeRobot processor
+    pipelines (`policy_preprocessor.json` and `policy_postprocessor.json` name the step whose
+    safetensors file holds the statistics). Only MEAN_STD features are returned."""
+    from safetensors import safe_open
+
+    d = checkpoint_dir(checkpoint)
+    stats: dict[str, dict[str, list[float]]] = {}
+    for pipeline in ("policy_preprocessor.json", "policy_postprocessor.json"):
+        for step in json.loads((d / pipeline).read_text())["steps"]:
+            if step["registry_name"] not in ("normalizer_processor", "unnormalizer_processor"):
+                continue
+            cfg = step["config"]
+            with safe_open(str(d / step["state_file"]), "pt") as f:
+                for feat, spec in cfg["features"].items():
+                    if cfg["norm_map"].get(spec["type"]) != "MEAN_STD":
+                        continue
+                    stats[feat] = {k: f.get_tensor(f"{feat}.{k}").flatten().tolist() for k in ("mean", "std")}
+    return stats
+
+
+def serving_manifest(policy, checkpoint: str = CHECKPOINT, image_size: tuple[int, int] | None = None) -> dict:
+    """The `vla` manifest for `program()`: ImageNet-normalized cameras at the compiled size, the
+    checkpoint's state and action statistics. LeRobot normalizes images with per-camera dataset
+    statistics only when its norm_map says so; ACT's defaults keep the ImageNet constants."""
+    config = policy.config
+    cams = list(config.image_features)
+    _, h, w = config.image_features[cams[0]].shape
+    if image_size is not None:
+        h, w = image_size
+    stats = normalizer_stats(checkpoint)
+    images = []
+    for cam in cams:
+        s = stats.get(cam)
+        mean, std = (s["mean"], s["std"]) if s else (vla.IMAGENET_MEAN, vla.IMAGENET_STD)
+        images.append(vla.image(cam, h, w, mean=mean, std=std))
+    st, ac = stats.get("observation.state", {}), stats.get("action", {})
+    return vla.manifest(
+        images=images,
+        state=vla.state("state", dim=config.robot_state_feature.shape[0], mean=st.get("mean"), std=st.get("std")),
+        actions=vla.actions("actions", chunk=config.chunk_size, dim=config.action_feature.shape[0],
+                            mean=ac.get("mean"), std=ac.get("std")),
+    )
+
+
 def program(checkpoint: str = CHECKPOINT, image_size: tuple[int, int] | None = None) -> ggml_compiler.Program:
     policy = load(checkpoint)
     cams = list(policy.config.image_features)
     return ggml_compiler.Program.single(ACTInfer(policy.model).eval(), example_inputs(policy.config, image_size),
-                                        input_names=["state", *cams], output_names=["actions"])
+                                        input_names=["state", *cams], output_names=["actions"],
+                                        metadata={"vla": serving_manifest(policy, checkpoint, image_size)})
