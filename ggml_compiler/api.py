@@ -129,6 +129,7 @@ class Program:
         example_inputs: Sequence[Any],
         input_names: Sequence[str] | None = None,
         output_names: Sequence[str] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> "Program":
         """One stage running module.forward."""
         example_inputs = tuple(example_inputs)
@@ -148,4 +149,5 @@ class Program:
             root=module,
             stages={"forward": Stage(module, example_inputs)},
             driver=Driver(inputs=input_names, body=[call("forward", input_names, outputs)], outputs=outputs),
+            metadata=dict(metadata or {}),
         )

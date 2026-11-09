@@ -171,6 +171,14 @@ GGML_COMPILER_API ggml_compiler_model * ggml_compiler_load_with(const char * pat
                                                                 const ggml_compiler_builder * builders,
                                                                 int n_builders);
 
+/* ggml_compiler_load_with on a backend the caller initialized itself (ggml_backend_dev_init, or a
+   host application's own device choice: the SYCL, Metal or OpenVINO backend it already runs). Takes
+   ownership of `backend`: ggml_compiler_free frees it, and so does a failed load. A CPU backend keeps
+   the thread count the caller set. `builders` may be NULL with n_builders 0. */
+struct ggml_backend;
+GGML_COMPILER_API ggml_compiler_model * ggml_compiler_load_on(const char * path, struct ggml_backend * backend,
+                                                              const ggml_compiler_builder * builders, int n_builders);
+
 #ifdef __cplusplus
 }
 #endif

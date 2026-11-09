@@ -190,7 +190,8 @@ struct ggml_compiler_model {
         if (backend) ggml_backend_free(backend);
     }
 
-    void load(const char * path, const ggml_compiler_options & opt);
+    // `backend` is already this model's (freed by the destructor on failure too).
+    void load(const char * path);
 
     // Make the views and graphs match `binding` (no-op when they already do).
     void rebind();
@@ -247,11 +248,7 @@ struct ggml_compiler_model {
     void build_site(const DriverOp & d);
 };
 
-void ggml_compiler_model::load(const char * path, const ggml_compiler_options & opt) {
-    if (opt.allow_cpu_fallback) {
-        throw std::runtime_error("allow_cpu_fallback is not implemented yet");
-    }
-
+void ggml_compiler_model::load(const char * path) {
     gguf_init_params gp{};
     gp.no_alloc = true;
     gp.ctx      = &wctx;
@@ -266,7 +263,6 @@ void ggml_compiler_model::load(const char * path, const ggml_compiler_options & 
     }
     prog = parse_program(gguf_get_val_str(gguf, key));
 
-    backend = init_backend(opt);
     load_weights(path);
     for (const auto & sy : prog.symbols) binding.push_back(sy.max);
     prog.bind(binding);
@@ -888,22 +884,49 @@ ggml_compiler_model * ggml_compiler_load(const char * path, const ggml_compiler_
     return ggml_compiler_load_with(path, opt, nullptr, 0);
 }
 
+namespace {
+
+// `m` owns its backend already; load the program onto it.
+ggml_compiler_model * load_model(std::unique_ptr<ggml_compiler_model> m, const char * path,
+                                 const ggml_compiler_builder * builders, int n_builders) {
+    if (!path) throw std::runtime_error("path is NULL");
+    if (!m->backend) throw std::runtime_error("backend is NULL");
+    for (int i = 0; i < n_builders; i++) m->builders[builders[i].stage] = builders[i].build;
+    m->load(path);
+    for (const auto & [name, fn] : m->builders) {
+        bool found = false;
+        for (const auto & st : m->prog.stages) found = found || st.name == name;
+        if (!found) throw std::runtime_error("builder for stage '" + name + "', which the program does not have");
+    }
+    return m.release();
+}
+
+}  // namespace
+
 ggml_compiler_model * ggml_compiler_load_with(const char * path, const ggml_compiler_options * opt,
                                               const ggml_compiler_builder * builders, int n_builders) {
     init_logging();
     const ggml_compiler_options o = opt ? *opt : ggml_compiler_default_options();
     return guarded(
         [&]() -> ggml_compiler_model * {
-            if (!path) throw std::runtime_error("path is NULL");
-            auto m = std::make_unique<ggml_compiler_model>();
-            for (int i = 0; i < n_builders; i++) m->builders[builders[i].stage] = builders[i].build;
-            m->load(path, o);
-            for (const auto & [name, fn] : m->builders) {
-                bool found = false;
-                for (const auto & st : m->prog.stages) found = found || st.name == name;
-                if (!found) throw std::runtime_error("builder for stage '" + name + "', which the program does not have");
+            if (o.allow_cpu_fallback) {
+                throw std::runtime_error("allow_cpu_fallback is not implemented yet");
             }
-            return m.release();
+            auto m     = std::make_unique<ggml_compiler_model>();
+            m->backend = init_backend(o);
+            return load_model(std::move(m), path, builders, n_builders);
+        },
+        nullptr);
+}
+
+ggml_compiler_model * ggml_compiler_load_on(const char * path, ggml_backend * backend,
+                                            const ggml_compiler_builder * builders, int n_builders) {
+    init_logging();
+    return guarded(
+        [&]() -> ggml_compiler_model * {
+            auto m     = std::make_unique<ggml_compiler_model>();
+            m->backend = backend;  // ours from here on, failure included
+            return load_model(std::move(m), path, builders, n_builders);
         },
         nullptr);
 }

@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- `ggml_compiler.vla`: a serving manifest, stored in the GGUF's metadata under `vla`, that names a
+  policy's inputs and outputs by role with the preprocessing of each (image size and
+  normalization, token padding, state and action statistics), so a host such as vla.cpp's
+  `vla-server` runs a compiled policy without model-specific code. `compile` checks a manifest
+  against the program; the ACT example fills one from the checkpoint. [docs/SERVING.md](docs/SERVING.md).
+- Runtime: `ggml_compiler_load_on` loads a model onto a `ggml_backend_t` the application initialized
+  (any ggml backend) and owns it from then on. `GGML_COMPILER_EXTERNAL_GGML=ON` builds the runtime
+  against an enclosing project's `ggml` target instead of fetching llama.cpp, with the tag checked.
+- `Program.single` takes `metadata`.
+
 ## 0.1.0
 
 First release.

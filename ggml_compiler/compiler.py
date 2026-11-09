@@ -239,6 +239,11 @@ def compile(
             if example_inputs is None:
                 raise TypeError("example_inputs is required when compiling a module")
             program = api.Program.single(model, example_inputs, input_names, output_names)
+        if "vla" in program.metadata:  # a serving manifest must cover the default entry exactly
+            from . import vla
+
+            default = next(iter(program.entries.values()))
+            vla.check(program.metadata["vla"], default.inputs, default.outputs)
         context = prequant.prepare(program.root, found) if prequant is not None else None
         prog, ref = export_program(program, export_context=context)
         source = {"frontend": "torch.export", "torch": torch.__version__,

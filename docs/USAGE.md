@@ -598,9 +598,12 @@ ggml_compiler_free(m);
 
 Every function returns 0 or a non-NULL handle on success. On failure it sets
 `ggml_compiler_last_error()`. Also in the header: `ggml_compiler_quantize` /
-`ggml_compiler_row_size` (ggml's encoders, used by the compiler) and `ggml_compiler_load_with` with
-the `ggml_compiler_build_*` functions that generated C++ uses. `build/ggml-compiler-info MODEL.gguf
-[cpu|cuda]` prints a model's inputs and outputs.
+`ggml_compiler_row_size` (ggml's encoders, used by the compiler), `ggml_compiler_load_with` with
+the `ggml_compiler_build_*` functions that generated C++ uses, and `ggml_compiler_load_on`, which
+loads onto a `ggml_backend_t` the application initialized itself (any ggml backend, not only CPU
+and CUDA) and owns it from then on. `build/ggml-compiler-info MODEL.gguf [cpu|cuda]` prints a
+model's inputs and outputs. A robot-policy host reads the `vla` serving manifest from the metadata:
+see [SERVING.md](SERVING.md).
 
 ## CLI
 
