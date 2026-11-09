@@ -11,6 +11,9 @@
   (any ggml backend) and owns it from then on. `GGML_COMPILER_EXTERNAL_GGML=ON` builds the runtime
   against an enclosing project's `ggml` target instead of fetching llama.cpp, with the tag checked.
 - `Program.single` takes `metadata`.
+- `examples/corp`: CoRP (LIBERO), compiled from its own checkout with a manifest and served by
+  vla.cpp with no code added to either project; CPU 7.1e-7 and CUDA 6.1e-4 against its PyTorch.
+  [docs/VLA_CPP.md](docs/VLA_CPP.md) walks through it as the recipe for the next model.
 
 ## 0.1.0
 

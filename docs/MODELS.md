@@ -20,6 +20,7 @@ types.
 | pi0.5 | `lerobot/pi05_libero_finetuned_v044` | `examples/pi` | LeRobot, vla.cpp |
 | GR00T N1.7 | `nvidia/GR00T-N1.7-LIBERO` (libero_object) | `examples/groot` | LeRobot, vla.cpp |
 | Diffusion Policy | `lerobot/diffusion_pusht` | `examples/diffusion` | LeRobot |
+| CoRP (LIBERO) | `corp-policy/CoRP`, `checkpoints/corp_libero.pt` | `examples/corp` | CoRP's PyTorch, vla.cpp serving the GGUF |
 
 - [How the checks work](#how-the-checks-work)
 - [Language models](#language-models)
@@ -224,10 +225,13 @@ same):
 | pi0.5, 2 layers | 2 x 224, 200 tokens | prefix + 10 flow steps | 1.8e-7 | 6.6e-5 |
 | GR00T N1.7, full | 2 x 256, 148 tokens | backbone + encode + 4 flow steps (+ hoisted part) | 6.6e-5 | (12.6 GB in f32 > 12 GB) |
 | GR00T N1.7, language model 3 layers, DiT 4, VL self-attention 1 | 2 x 256, 148 tokens | same | 1.1e-7 | 8.4e-5 |
+| CoRP | 2 x 224, 32 tokens | encoders + 10 Euler steps, 1 stage | 7.1e-7 | 6.1e-4 |
 
 The stage functions reproduce LeRobot's own samplers: Diffusion Policy's `generate_actions` (DDIM,
 and DDPM with LeRobot's seeded noise) and GR00T N1.7's `get_action` bit for bit, pi0 and pi0.5's
-`sample_actions` within 1e-5.
+`sample_actions` within 1e-5. The CoRP export reproduces CoRP's own `predict` bit for bit in
+PyTorch, and the chunk returned by vla.cpp's `vla-server` from the GGUF is within 7.2e-7 of it
+([VLA_CPP.md](VLA_CPP.md)).
 
 Full-size pi0 and pi0.5 with 16-bit weights, against the f32 reference (CPU / CUDA): pi0 BF16
 1.2e-3 / 1.1e-3, F16 1.5e-4 / 5.3e-4; pi0.5 BF16 8.9e-3 / 5.0e-3, F16 1.1e-3 / 6.4e-3 (CUDA's F16
@@ -264,6 +268,10 @@ Latency against vla.cpp (inputs as `vla-bench --images N --size S --tokens T`):
 only where the row says so. vla.cpp's
 pi0.5 GGUF is `vrfai/pi05-libero-gguf`, made from `pi05_libero_base`: vla.cpp's converter refuses
 the finetuned checkpoint's normalization, and the architecture and shapes are the same.
+
+vla.cpp has no hand-written CoRP; it serves the compiled GGUF: 125 ms per chunk on the CPU (CoRP's
+PyTorch `predict`: 73 ms, oneDNN's f32 convolutions and GEMMs ahead of ggml's at batch 1) and 9.8
+ms on CUDA through the runtime.
 
 vla.cpp has no Diffusion Policy. Against PyTorch on CPU, DDIM with 10 steps takes 326 ms in
 ggml-compiler with f32 weights and 199 ms with F16 (`examples/diffusion/policy-f16.yaml`), against

@@ -152,6 +152,9 @@ For someone who wants to serve a model this project does not list:
 4. Hand `out/model/model.gguf` to the host. With vla.cpp:
    `vla-server out/model/model.gguf`; clients are unchanged.
 
+[VLA_CPP.md](VLA_CPP.md) walks through these steps for CoRP, a policy neither project knew, down to
+the chunk coming back from `vla-server`.
+
 Keep `--emit cpp` for what it is for: a standalone binary that carries the model's graphs without
 the JSON interpreter. The generated C++ is bit-identical to the runtime's own graphs, so it buys a
 server nothing, and a per-model shared library would bring back the two-ggml problem.
